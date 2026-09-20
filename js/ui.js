@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-3";
-import { Game, formatCurrency } from "./game.js?v=20260920-3";
+} from "./data.js?v=20260920-5";
+import { Game, formatCurrency } from "./game.js?v=20260920-5";
 
 let root;
 let workspace;
@@ -35,7 +35,8 @@ const GUIDE_STEPS = [
     title: "先查看贷款邮件",
     message: "关闭贷款邮件后，下一步会提示你查看日历。",
     target: "mail",
-    buttonText: "打开邮件"
+    action: "close-mail",
+    buttonText: "关闭邮件"
   },
   {
     id: "CALENDAR",
@@ -536,7 +537,10 @@ function bindEvents() {
   root.addEventListener("pointerdown", handleRootPointerDown, true);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("keydown", handleKeyDown);
-  window.addEventListener("resize", clampOpenWindows);
+  window.addEventListener("resize", () => {
+    clampOpenWindows();
+    refreshFromState();
+  });
 }
 
 function handleKeyDown(event) {
@@ -732,6 +736,9 @@ function handleClick(event) {
     dismissedGuideStep = Game.getState().guideStep;
     refreshFromState();
   }
+  if (action === "close-mail") {
+    closeWindow("mail");
+  }
   if (action === "dismiss-keyword-tip") {
     Game.dismissKeywordTip();
     refreshFromState();
@@ -890,6 +897,86 @@ function markUserInteraction() {
   lastInteractionAt = Date.now();
   idleReminderArmed = true;
   hideIdleReminder();
+}
+
+function getGuideAnchor(guide) {
+  if (!guide) return null;
+  if (guide.id === "NEWS") {
+    return document.querySelector("#news-popup:not(.is-hidden)");
+  }
+  if (guide.id === "MAIL") {
+    const closeButton = document.querySelector(
+      '.os-window[data-window-id="mail"] [data-window-action="close"]'
+    );
+    if (closeButton) return closeButton;
+  }
+  if (guide.id === "CALENDAR") {
+    return document.querySelector(
+      '.dock-button[data-open-app="calendar"]'
+    );
+  }
+  if (guide.target) {
+    return (
+      document.querySelector(
+        `.desktop-icon[data-open-app="${guide.target}"]`
+      ) ??
+      document.querySelector(
+        `.dock-button[data-open-app="${guide.target}"]`
+      )
+    );
+  }
+  return null;
+}
+
+function positionGuidePopup(popup, guide) {
+  const anchor = getGuideAnchor(guide);
+  const rootRect = root.getBoundingClientRect();
+  const taskbarTop =
+    document.querySelector(".taskbar")?.getBoundingClientRect().top ??
+    rootRect.bottom;
+  const margin = 12;
+  const gap = 12;
+  const width = popup.offsetWidth || 340;
+  const height = popup.offsetHeight || 130;
+  let left = margin;
+  let top = margin;
+  let placement = "right";
+
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    if (guide.id === "MAIL") {
+      placement = "top";
+      left = rect.left - rootRect.left - width - gap;
+      top = rect.bottom - rootRect.top + gap;
+    } else if (
+      guide.id === "NEWS" ||
+      rect.left - rootRect.left > rootRect.width / 2
+    ) {
+      placement = "right";
+      left = rect.left - rootRect.left - width - gap;
+      top = rect.top - rootRect.top;
+    } else if (
+      anchor.closest(".dock") ||
+      rect.top - rootRect.top > rootRect.height * 0.62
+    ) {
+      placement = "bottom";
+      left = rect.left - rootRect.left;
+      top = rect.top - rootRect.top - height - gap;
+    } else {
+      placement = "left";
+      left = rect.right - rootRect.left + gap;
+      top = rect.top - rootRect.top;
+    }
+  }
+
+  const maxLeft = Math.max(margin, rootRect.width - width - margin);
+  const maxTop = Math.max(
+    margin,
+    taskbarTop - rootRect.top - height - margin
+  );
+  popup.dataset.placement = placement;
+  popup.style.left = `${clamp(left, margin, maxLeft)}px`;
+  popup.style.top = `${clamp(top, margin, maxTop)}px`;
 }
 
 function updateIdleReminder() {
@@ -1265,13 +1352,15 @@ function syncDesktopState() {
       guideMessage.textContent =
         Game.getGuideMessage() || currentGuide.message;
       guideProgress.textContent = `${currentGuide.number} / ${GUIDE_STEPS.length}`;
-      guideAction.innerHTML = currentGuide.target
-        ? `<button type="button" class="legacy-button primary" data-open-app="${currentGuide.target}">${escapeHtml(
+      guideAction.innerHTML = currentGuide.action
+        ? `<button type="button" class="legacy-button primary" data-action="${currentGuide.action}">${escapeHtml(
             currentGuide.buttonText
           )}</button>`
-        : `<button type="button" class="legacy-button primary" data-action="${currentGuide.action}">${escapeHtml(
+        : `<button type="button" class="legacy-button primary" data-open-app="${currentGuide.target}">${escapeHtml(
             currentGuide.buttonText
           )}</button>`;
+      positionGuidePopup(guidePopup, currentGuide);
+      guidePopup.classList.add("is-positioned");
     }
   }
 

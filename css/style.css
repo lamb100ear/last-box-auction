@@ -1548,13 +1548,56 @@ input:focus-visible {
 .beginner-guide {
   position: absolute;
   z-index: 42;
-  bottom: calc(var(--taskbar-height) + 18px);
-  left: 18px;
-  width: min(390px, calc(100vw - 36px));
+  top: 0;
+  left: 0;
+  width: min(340px, calc(100vw - 24px));
   padding: 0 0 12px;
   border: 2px outset var(--win-gray);
   background: #fffbe2;
   box-shadow: 5px 6px 0 rgba(0, 0, 0, 0.28);
+}
+
+.beginner-guide:not(.is-positioned) {
+  visibility: hidden;
+}
+
+.beginner-guide::before {
+  position: absolute;
+  width: 0;
+  height: 0;
+  content: "";
+}
+
+.beginner-guide[data-placement="left"]::before {
+  top: 22px;
+  left: -11px;
+  border-top: 9px solid transparent;
+  border-right: 11px solid #000080;
+  border-bottom: 9px solid transparent;
+}
+
+.beginner-guide[data-placement="right"]::before {
+  top: 22px;
+  right: -11px;
+  border-top: 9px solid transparent;
+  border-bottom: 9px solid transparent;
+  border-left: 11px solid #000080;
+}
+
+.beginner-guide[data-placement="top"]::before {
+  top: -11px;
+  right: 24px;
+  border-right: 9px solid transparent;
+  border-bottom: 11px solid #000080;
+  border-left: 9px solid transparent;
+}
+
+.beginner-guide[data-placement="bottom"]::before {
+  bottom: -11px;
+  left: 22px;
+  border-top: 11px solid #000080;
+  border-right: 9px solid transparent;
+  border-left: 9px solid transparent;
 }
 
 .beginner-guide > header {
