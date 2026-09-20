@@ -2,3 +2,5 @@
 Thumbs.db
 *.log
 .codex/
+.env
+.cloudflare-token
