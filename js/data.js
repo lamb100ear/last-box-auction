@@ -14,7 +14,7 @@ export const CONFIG = {
   firstPayment: 1800,
   paymentIntervalDays: 7,
   gameMinutesPerSecond: 2.5,
-  idleReminderSeconds: 30
+  idleReminderSeconds: 20
 };
 
 export const DESKTOP_APPS = [

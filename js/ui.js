@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-5";
-import { Game, formatCurrency } from "./game.js?v=20260920-5";
+} from "./data.js?v=20260920-6";
+import { Game, formatCurrency } from "./game.js?v=20260920-6";
 
 let root;
 let workspace;
