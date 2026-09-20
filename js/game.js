@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-6";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-7";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -973,7 +973,12 @@ export const Game = {
   },
 
   setGuideStep(step) {
+    if (state.guideStep === step) return;
     if (state.guideStep !== "DONE") {
+      state.guidePopupDismissedSteps = unique([
+        ...(state.guidePopupDismissedSteps ?? []),
+        state.guideStep
+      ]);
       state.guideStep = step;
     }
   },
@@ -1235,6 +1240,16 @@ export const Game = {
     commit();
   },
 
+  dismissCurrentGuideStep() {
+    const step = state.guideStep;
+    if (!step || step === "DONE") return;
+    state.guidePopupDismissedSteps = unique([
+      ...(state.guidePopupDismissedSteps ?? []),
+      step
+    ]);
+    commit();
+  },
+
   buyMallItem(productId) {
     if (!state.mallStock.includes(productId)) return false;
     const product = STAGE_TWO_DATA.mallProducts.find(
@@ -1379,6 +1394,7 @@ function createInitialState() {
       overdue: false
     },
     guideStep: "MAIL",
+    guidePopupDismissedSteps: [],
     calendarOpened: false,
     folderOpened: false,
     newsRead: false,
@@ -1465,6 +1481,11 @@ function normalizeState(parsed) {
   if (parsed.onsiteSearchItem) {
     parsed.onsiteSearchItem = normalizeItemData(parsed.onsiteSearchItem);
   }
+  parsed.guidePopupDismissedSteps = Array.isArray(
+    parsed.guidePopupDismissedSteps
+  )
+    ? parsed.guidePopupDismissedSteps
+    : [];
 
   parsed.nextPayment ??= {
     amount: CONFIG.firstPayment,

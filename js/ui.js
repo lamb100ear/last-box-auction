@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-6";
-import { Game, formatCurrency } from "./game.js?v=20260920-6";
+} from "./data.js?v=20260920-7";
+import { Game, formatCurrency } from "./game.js?v=20260920-7";
 
 let root;
 let workspace;
@@ -24,7 +24,6 @@ let newsExpanded = false;
 let clockTimer = null;
 let uiScreen = "MENU";
 let isPaused = false;
-let dismissedGuideStep = null;
 let lastInteractionAt = Date.now();
 let idleReminderArmed = true;
 
@@ -639,7 +638,6 @@ function handleClick(event) {
     newsMinimized = false;
     lastNewsId = null;
     newsExpanded = false;
-    dismissedGuideStep = null;
     dismissedBuyerId = null;
     closeStartMenu();
     renderNicknameScreen();
@@ -733,7 +731,7 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "hide-guide") {
-    dismissedGuideStep = Game.getState().guideStep;
+    Game.dismissCurrentGuideStep();
     refreshFromState();
   }
   if (action === "close-mail") {
@@ -1344,7 +1342,8 @@ function syncDesktopState() {
       (entry) => entry.id === state.guideStep
     );
     const shouldShow =
-      Boolean(currentGuide) && dismissedGuideStep !== state.guideStep;
+      Boolean(currentGuide) &&
+      !(state.guidePopupDismissedSteps ?? []).includes(state.guideStep);
     guidePopup.classList.toggle("is-hidden", !shouldShow);
     if (currentGuide && shouldShow) {
       guideStep.textContent = `第 ${currentGuide.number} 步`;
