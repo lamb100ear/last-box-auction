@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-3";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
