@@ -24,9 +24,77 @@ let newsExpanded = false;
 let clockTimer = null;
 let uiScreen = "MENU";
 let isPaused = false;
-let flowGuideCollapsed = false;
+let dismissedGuideStep = null;
 let lastInteractionAt = Date.now();
 let idleReminderArmed = true;
+
+const GUIDE_STEPS = [
+  {
+    id: "MAIL",
+    number: 1,
+    title: "先查看贷款邮件",
+    message: "关闭贷款邮件后，下一步会提示你查看日历。",
+    target: "mail",
+    buttonText: "打开邮件"
+  },
+  {
+    id: "CALENDAR",
+    number: 2,
+    title: "确认还款日期",
+    message: "打开日历，确认第一次还款日、金额和剩余天数。",
+    target: "calendar",
+    buttonText: "打开日历"
+  },
+  {
+    id: "NEWS",
+    number: 3,
+    title: "查看今日新闻",
+    message: "点击右下角新闻中的“查看”，了解今天的市场情况。",
+    target: null,
+    action: "view-news",
+    buttonText: "查看新闻"
+  },
+  {
+    id: "AUCTION",
+    number: 4,
+    title: "参加线上拍卖",
+    message: "打开线上拍卖，查看两条线索并决定是否参与竞拍。",
+    target: "auction",
+    buttonText: "打开线上拍卖"
+  },
+  {
+    id: "SHOP",
+    number: 5,
+    title: "前往我的店铺",
+    message: "打开我的店铺，查看库存中的物品并点开物品详情。",
+    target: "shop",
+    buttonText: "打开我的店铺"
+  },
+  {
+    id: "SEARCH",
+    number: 6,
+    title: "用万物通搜索关键词",
+    message: "点击物品详情中的黄色关键词，在万物通确认资料和价格线索。",
+    target: "universal",
+    buttonText: "打开万物通"
+  },
+  {
+    id: "LIST",
+    number: 7,
+    title: "选择标签并上架",
+    message: "返回我的店铺，选择两个标签、售价和上架日期后发布。",
+    target: "shop",
+    buttonText: "返回我的店铺"
+  },
+  {
+    id: "FOLDER",
+    number: 8,
+    title: "查看收藏文件夹",
+    message: "打开文件夹查看自留藏品和已经生效的属性。",
+    target: "folder",
+    buttonText: "打开文件夹"
+  }
+];
 
 export function mountUI() {
   root = document.querySelector("#app");
@@ -192,12 +260,17 @@ function renderDesktop() {
         <div class="window-layer" id="window-layer"></div>
       </div>
 
-      <aside class="flow-guide is-hidden" id="flow-guide">
+      <aside class="beginner-guide is-hidden" id="beginner-guide" aria-live="polite">
         <header>
-          <strong>今日流程</strong>
-          <button type="button" data-action="toggle-flow-guide" aria-label="收起流程">_</button>
+          <span class="beginner-guide-step" id="beginner-guide-step">第 1 步</span>
+          <strong id="beginner-guide-title">新手引导</strong>
+          <button type="button" data-action="hide-guide" aria-label="暂时隐藏这一步">×</button>
         </header>
-        <div id="flow-guide-steps"></div>
+        <p id="beginner-guide-message"></p>
+        <div class="beginner-guide-footer">
+          <span id="beginner-guide-progress"></span>
+          <span id="beginner-guide-action"></span>
+        </div>
       </aside>
 
       <aside class="news-popup is-hidden" id="news-popup" aria-live="polite">
@@ -556,17 +629,13 @@ function handleClick(event) {
   } = actionButton.dataset;
 
   if (action === "toggle-start") toggleStartMenu();
-  if (action === "toggle-flow-guide") {
-    flowGuideCollapsed = !flowGuideCollapsed;
-    refreshFromState();
-  }
   if (action === "restart-game") {
     Game.startNewGame();
     newsSummaryVisible = false;
     newsMinimized = false;
     lastNewsId = null;
     newsExpanded = false;
-    flowGuideCollapsed = false;
+    dismissedGuideStep = null;
     dismissedBuyerId = null;
     closeStartMenu();
     renderNicknameScreen();
@@ -657,6 +726,10 @@ function handleClick(event) {
   }
   if (action === "dismiss-payment-notice") {
     Game.dismissPaymentNotice();
+    refreshFromState();
+  }
+  if (action === "hide-guide") {
+    dismissedGuideStep = Game.getState().guideStep;
     refreshFromState();
   }
   if (action === "dismiss-keyword-tip") {
@@ -1152,42 +1225,53 @@ function syncDesktopState() {
   const arrestOverlay = document.querySelector("#arrest-overlay");
   const tradeOverlay = document.querySelector("#trade-feedback-overlay");
   const tradeContent = document.querySelector("#trade-feedback-content");
-  const flowGuide = document.querySelector("#flow-guide");
-  const flowSteps = document.querySelector("#flow-guide-steps");
+  const guidePopup = document.querySelector("#beginner-guide");
+  const guideStep = document.querySelector("#beginner-guide-step");
+  const guideTitle = document.querySelector("#beginner-guide-title");
+  const guideMessage = document.querySelector("#beginner-guide-message");
+  const guideProgress = document.querySelector("#beginner-guide-progress");
+  const guideAction = document.querySelector("#beginner-guide-action");
 
   root.querySelectorAll('[data-app-badge="shop"]').forEach((badge) => {
     badge.classList.toggle("is-hidden", !state.buyerChat?.unread);
   });
 
-  if (flowGuide && flowSteps) {
-    const order = [
-      ["MAIL", "邮件"],
-      ["CALENDAR", "日历"],
-      ["NEWS", "新闻"],
-      ["AUCTION", "拍卖"],
-      ["SHOP", "我的店铺"],
-      ["SEARCH", "万物通"],
-      ["LIST", "上架"],
-      ["FOLDER", "文件夹"]
-    ];
-    const currentIndex = order.findIndex(([step]) => step === state.guideStep);
-    const shouldShow = currentIndex >= 0 && state.guideStep !== "DONE";
-    flowGuide.classList.toggle("is-hidden", !shouldShow);
-    flowGuide.classList.toggle("is-collapsed", flowGuideCollapsed);
-    if (shouldShow) {
-      flowSteps.innerHTML = order
-        .map(
-          ([, label], index) => `
-            <span class="${
-              index < currentIndex
-                ? "is-complete"
-                : index === currentIndex
-                  ? "is-current"
-                  : ""
-            }">${index + 1}. ${label}</span>
-          `
-        )
-        .join("");
+  root.querySelectorAll("[data-open-app]").forEach((button) => {
+    button.classList.toggle(
+      "is-guided",
+      state.guideStep !== "DONE" &&
+        button.dataset.openApp === guideTarget &&
+        !button.closest("#start-menu")
+    );
+  });
+
+  if (
+    guidePopup &&
+    guideStep &&
+    guideTitle &&
+    guideMessage &&
+    guideProgress &&
+    guideAction
+  ) {
+    const currentGuide = GUIDE_STEPS.find(
+      (entry) => entry.id === state.guideStep
+    );
+    const shouldShow =
+      Boolean(currentGuide) && dismissedGuideStep !== state.guideStep;
+    guidePopup.classList.toggle("is-hidden", !shouldShow);
+    if (currentGuide && shouldShow) {
+      guideStep.textContent = `第 ${currentGuide.number} 步`;
+      guideTitle.textContent = currentGuide.title;
+      guideMessage.textContent =
+        Game.getGuideMessage() || currentGuide.message;
+      guideProgress.textContent = `${currentGuide.number} / ${GUIDE_STEPS.length}`;
+      guideAction.innerHTML = currentGuide.target
+        ? `<button type="button" class="legacy-button primary" data-open-app="${currentGuide.target}">${escapeHtml(
+            currentGuide.buttonText
+          )}</button>`
+        : `<button type="button" class="legacy-button primary" data-action="${currentGuide.action}">${escapeHtml(
+            currentGuide.buttonText
+          )}</button>`;
     }
   }
 
