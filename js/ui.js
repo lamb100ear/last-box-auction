@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-7";
-import { Game, formatCurrency } from "./game.js?v=20260920-7";
+} from "./data.js?v=20260920-8";
+import { Game, formatCurrency } from "./game.js?v=20260920-8";
 
 let root;
 let workspace;
@@ -76,7 +76,8 @@ const GUIDE_STEPS = [
     title: "用万物通搜索关键词",
     message: "点击物品详情中的黄色关键词，在万物通确认资料和价格线索。",
     target: "universal",
-    buttonText: "打开万物通"
+    action: "guide-search-keyword",
+    buttonText: "搜索关键词"
   },
   {
     id: "LIST",
@@ -213,6 +214,14 @@ function enterDesktop() {
   refreshFromState();
   if (Game.getState().guideStep === "MAIL" && !windowState.has("mail")) {
     openApp("mail");
+  }
+  if (
+    Game.getState().preserveWindowLayout &&
+    Game.getState().savedWindowLayout?.length
+  ) {
+    window.setTimeout(() => {
+      restoreWindowLayout(Game.getState().savedWindowLayout);
+    }, 50);
   }
 }
 
@@ -377,6 +386,17 @@ function renderDesktop() {
             <strong id="taskbar-time">21:00</strong>
           </span>
           <button
+            class="layout-button ${state.preserveWindowLayout ? "is-active" : ""}"
+            id="layout-retention-button"
+            type="button"
+            data-action="toggle-window-layout"
+            aria-pressed="${state.preserveWindowLayout ? "true" : "false"}"
+            title="保留窗口布局"
+          >
+            <span aria-hidden="true">▦</span>
+            <b>${state.preserveWindowLayout ? "保留中" : "保留布局"}</b>
+          </button>
+          <button
             class="sleep-button"
             id="sleep-button"
             type="button"
@@ -532,7 +552,7 @@ function renderDesktop() {
 
 function bindEvents() {
   root.addEventListener("click", handleClick);
-  root.addEventListener("change", handleInputChange);
+  root.addEventListener("input", handleInputChange);
   root.addEventListener("pointerdown", handleRootPointerDown, true);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
   document.addEventListener("keydown", handleKeyDown);
@@ -558,7 +578,14 @@ function handleInputChange(event) {
   const input = event.target.closest('[data-field="listing-price"]');
   if (!input) return;
   Game.setListingPrice(Number(input.value));
-  refreshFromState();
+  const valueNode = input
+    .closest(".price-editor")
+    ?.querySelector("strong");
+  if (valueNode) {
+    valueNode.textContent = formatCurrency(
+      Game.getState().listingDraft?.price ?? Number(input.value)
+    );
+  }
 }
 
 function handleClick(event) {
@@ -707,6 +734,7 @@ function handleClick(event) {
   if (action === "close-trade-feedback") {
     Game.acknowledgeTradeFeedback();
     refreshFromState();
+    resetShopScroll();
   }
   if (action === "open-calendar-from-trouble") {
     Game.acknowledgeTroublePopup();
@@ -736,6 +764,20 @@ function handleClick(event) {
   }
   if (action === "close-mail") {
     closeWindow("mail");
+  }
+  if (action === "toggle-window-layout") {
+    Game.toggleWindowLayoutPreservation();
+    refreshFromState();
+  }
+  if (action === "guide-search-keyword") {
+    const keywordButton = document.querySelector(
+      '.os-window[data-window-id="item-detail"] .keyword-chip.is-searchable'
+    );
+    if (keywordButton) {
+      keywordButton.click();
+    } else {
+      openApp("universal");
+    }
   }
   if (action === "dismiss-keyword-tip") {
     Game.dismissKeywordTip();
@@ -863,6 +905,7 @@ function handleClick(event) {
   if (action === "reply-buyer") {
     Game.replyToBuyer(replyId);
     refreshFromState();
+    resetShopScroll();
   }
   if (action === "back-listings") {
     Game.getState().activeShopTab = "listings";
@@ -912,6 +955,12 @@ function getGuideAnchor(guide) {
     return document.querySelector(
       '.dock-button[data-open-app="calendar"]'
     );
+  }
+  if (guide.id === "SEARCH") {
+    const keywordButton = document.querySelector(
+      '.os-window[data-window-id="item-detail"] .keyword-chip.is-searchable'
+    );
+    if (keywordButton) return keywordButton;
   }
   if (guide.target) {
     return (
@@ -1018,6 +1067,9 @@ function hasBlockingOverlay() {
 }
 
 function performSleep() {
+  if (Game.getState().preserveWindowLayout) {
+    Game.saveWindowLayout(captureWindowLayout());
+  }
   Game.sleep();
   newsSummaryVisible = false;
   newsMinimized = false;
@@ -1025,6 +1077,75 @@ function performSleep() {
   newsExpanded = false;
   closeAllWindows();
   refreshFromState();
+  if (
+    Game.getState().preserveWindowLayout &&
+    Game.getState().savedWindowLayout?.length
+  ) {
+    window.setTimeout(() => {
+      restoreWindowLayout(Game.getState().savedWindowLayout);
+    }, 80);
+  }
+}
+
+function captureWindowLayout() {
+  return [...windowState.values()]
+    .filter((entry) => entry.app.id !== "item-detail")
+    .sort(
+      (left, right) =>
+        Number(left.element.style.zIndex) -
+        Number(right.element.style.zIndex)
+    )
+    .map((entry) => ({
+      appId: entry.app.id,
+      left: entry.element.offsetLeft,
+      top: entry.element.offsetTop,
+      width: entry.element.offsetWidth,
+      height: entry.element.offsetHeight,
+      minimized: entry.minimized,
+      maximized: entry.maximized
+    }));
+}
+
+function restoreWindowLayout(layout) {
+  if (!Array.isArray(layout) || !layout.length) return;
+  closeAllWindows();
+  layout.forEach((saved) => {
+    const app = DESKTOP_APPS.find(
+      (candidate) => candidate.id === saved.appId
+    );
+    if (!app || app.id === "item-detail") return;
+    openApp(app.id);
+    const entry = windowState.get(app.id);
+    if (!entry) return;
+    const maxWidth = Math.max(280, workspace.clientWidth - 16);
+    const maxHeight = Math.max(220, workspace.clientHeight - 16);
+    const width = clamp(Number(saved.width) || app.defaultSize.width, 280, maxWidth);
+    const height = clamp(Number(saved.height) || app.defaultSize.height, 220, maxHeight);
+    const left = clamp(
+      Number(saved.left) || 0,
+      0,
+      Math.max(0, workspace.clientWidth - width)
+    );
+    const top = clamp(
+      Number(saved.top) || 0,
+      0,
+      Math.max(0, workspace.clientHeight - height)
+    );
+    Object.assign(entry.element.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`
+    });
+    if (saved.maximized) toggleMaximizeWindow(app.id);
+    if (saved.minimized) minimizeWindow(app.id);
+  });
+  const lastVisible = layout
+    .filter((saved) => !saved.minimized)
+    .map((saved) => saved.appId)
+    .filter((appId) => windowState.has(appId))
+    .at(-1);
+  if (lastVisible) focusWindow(lastVisible);
 }
 
 function handleDocumentPointerDown(event) {
@@ -1229,9 +1350,22 @@ function refreshFromState() {
 function refreshWindow(appId) {
   const entry = windowState.get(appId);
   if (!entry) return;
-  entry.element.querySelector(".window-body").innerHTML = renderAppContent(appId);
+  const body = entry.element.querySelector(".window-body");
+  const state = Game.getState();
+  const nextShopTab = appId === "shop" ? state.activeShopTab : null;
+  body.innerHTML = renderAppContent(appId);
+  if (appId === "shop" && entry.lastShopTab !== nextShopTab) {
+    body.scrollTop = 0;
+    entry.lastShopTab = nextShopTab;
+  }
   const title = entry.element.querySelector("[data-window-title]");
   if (title) title.textContent = getWindowTitle(appId);
+}
+
+function resetShopScroll() {
+  const shopEntry = windowState.get("shop");
+  const body = shopEntry?.element.querySelector(".window-body");
+  if (body) body.scrollTop = 0;
 }
 
 function updateTaskbar() {
@@ -1265,6 +1399,7 @@ function updateTaskbar() {
   const cashNode = document.querySelector("#taskbar-cash");
   const troubleNode = document.querySelector("#taskbar-trouble");
   const reputationNode = document.querySelector("#taskbar-reputation");
+  const layoutNode = document.querySelector("#layout-retention-button");
   if (cashNode) cashNode.textContent = formatCurrency(state.cash);
   if (troubleNode) {
     troubleNode.textContent = `${state.trouble} / ${CONFIG.maxTrouble}`;
@@ -1278,6 +1413,22 @@ function updateTaskbar() {
     );
   }
   if (reputationNode) reputationNode.textContent = String(state.reputation);
+  if (layoutNode) {
+    layoutNode.classList.toggle(
+      "is-active",
+      Boolean(state.preserveWindowLayout)
+    );
+    layoutNode.setAttribute(
+      "aria-pressed",
+      state.preserveWindowLayout ? "true" : "false"
+    );
+    const label = layoutNode.querySelector("b");
+    if (label) {
+      label.textContent = state.preserveWindowLayout
+        ? "保留中"
+        : "保留布局";
+    }
+  }
 }
 
 function syncDesktopState() {
@@ -2251,13 +2402,13 @@ function renderInventoryItem(item) {
         ${
           !isBox && item.status !== "listed"
             ? item.category === "special"
-              ? `<button type="button" class="legacy-button" data-action="report-special" data-item-id="${item.id}">上报</button>
-                 <button
+              ? `<button
                    type="button"
                    class="legacy-button"
                    data-action="prepare-listing"
                    data-item-id="${item.id}"
-                 >冒险上架</button>`
+                 >上架</button>
+                 <button type="button" class="legacy-button" data-action="report-special" data-item-id="${item.id}">上报</button>`
               : `<button
                  type="button"
                  class="legacy-button"
@@ -2285,12 +2436,17 @@ function renderListingEditor() {
   const selectedFakeProduct = STAGE_TWO_DATA.mallProducts.find(
     (product) => product.id === draft.fakeItemId
   );
+  const priceAboveSuggested = draft.price > priceRange[1];
   const minPrice = priceRange[0];
   const maxPrice = Math.round(
     priceRange[1] * 1.6 * (selectedFakeProduct?.priceMultiplier ?? 1)
   );
   const researchedTags = new Set(item?.unlockedTags ?? []);
   const baseTags = new Set(["旧物", "来源不明"]);
+  const tagsVerified = draft.tags.every(
+    (tag) =>
+      researchedTags.has(tag) || baseTags.has(tag)
+  );
   const availableTags = unique([
     ...(item?.unlockedTags ?? []),
     ...(item?.keywords ?? []),
@@ -2352,6 +2508,13 @@ function renderListingEditor() {
                 )
                 .join("")}
             </div>
+            ${
+              draft.tags.length === 2 && !tagsVerified
+                ? `<div class="listing-verification-warning">
+                    当前包含未经核实的标签。买家询问编号或来源时你无法给出准确答案，买家信任和交易成功率都会降低。
+                  </div>`
+                : ""
+            }
           </div>
           <div class="listing-section">
             <strong>可伪造物品</strong>
@@ -2405,6 +2568,18 @@ function renderListingEditor() {
               />
               <strong>${formatCurrency(draft.price)}</strong>
             </div>
+            <small class="price-guidance">
+              建议售价：${formatCurrency(priceRange[0])} - ${formatCurrency(
+                priceRange[1]
+              )}
+            </small>
+            ${
+              priceAboveSuggested
+                ? `<div class="listing-price-warning">
+                    当前售价高于建议上限，成交后仍按你设定的价格结算，但买家放弃交易的概率会明显提高。
+                  </div>`
+                : ""
+            }
           </div>
           <div class="listing-section">
             <strong>选择上架日期</strong>
@@ -2453,6 +2628,11 @@ function renderListingRow(listing) {
             ? `<span class="listing-fake-note">已使用：${escapeHtml(
                 listing.fakeItemName
               )}</span>`
+            : ""
+        }
+        ${
+          listing.confidence === "low"
+            ? `<span class="listing-confidence-note">标签未经核实</span>`
             : ""
         }
         <button

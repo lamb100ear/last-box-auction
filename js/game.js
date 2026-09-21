@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-7";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-8";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -202,7 +202,7 @@ export const Game = {
 
     if (outcome === "home") {
       state.inventory.push({
-        ...createAuctionBoxEntry(),
+        ...createAuctionBoxEntry(auction),
         status: "unopened"
       });
       auction.result = {
@@ -438,6 +438,7 @@ export const Game = {
       item.category === "luxury" ? "私人来源" : "可收藏",
       item.keywords[0]
     ]);
+    propagateTypeKnowledge(item, keyword, fact);
 
     state.searchResult = {
       itemId,
@@ -476,6 +477,7 @@ export const Game = {
       item.category === "luxury" ? "私人来源" : "可收藏",
       item.keywords[0]
     ]);
+    propagateTypeKnowledge(item, keyword, fact);
     state.onsiteSearchItem = { ...item };
     state.searchResult = {
       itemId,
@@ -515,6 +517,7 @@ export const Game = {
       item.category === "luxury" ? "私人来源" : "可收藏",
       item.keywords[0]
     ]);
+    propagateTypeKnowledge(item, keyword, fact);
     state.searchResult = {
       itemId: item.id,
       keyword,
@@ -617,10 +620,13 @@ export const Game = {
             candidate.id === draft.fakeItemId && candidate.type === "fake"
         )
       : null;
-    const basePriceRange = state.searchResult?.priceRange ?? [
-      roundToTen(item.baseValue * 0.8),
-      roundToTen(item.baseValue * 1.2)
-    ];
+    const basePriceRange =
+      state.searchResult?.itemId === item.id
+        ? state.searchResult.priceRange
+        : [
+            roundToTen(item.baseValue * 0.8),
+            roundToTen(item.baseValue * 1.2)
+          ];
     const listingPriceRange = fakeProduct
       ? [
           roundToTen(basePriceRange[0] * fakeProduct.priceMultiplier),
@@ -732,32 +738,37 @@ export const Game = {
     const ruleTrust =
       (hasActiveRule("mystery_buyers") ? 5 : 0) -
       (hasActiveRule("strict_review") && listing.confidence === "low" ? 10 : 0);
+    const priceRatio =
+      listing.price / Math.max(1, listing.priceRange[1]);
+    const priceTrustPenalty =
+      priceRatio > 1
+        ? Math.min(28, Math.round((priceRatio - 1) * 36))
+        : 0;
+    const tagTrustPenalty =
+      listing.confidence === "high"
+        ? 0
+        : hasActiveRule("strict_review")
+          ? 20
+          : 12;
+    const confidenceBonus = listing.confidence === "high" ? 10 : 0;
     state.buyerChat = {
       id: `buyer_${Date.now().toString(36)}`,
       listingId: listing.id,
       buyer: { ...profile, questions, wantsDiscount },
       questionIndex: 0,
-      trust:
-        state.listings.find((candidate) => candidate.id === state.activeListingId)
-          ?.confidence === "high"
-          ? Math.min(
-              90,
-              profile.initialTrust +
-                10 +
-                effectTrust +
-                collectionTrust +
-                ruleTrust
-            )
-          : Math.max(
-              20,
-              Math.min(
-                80,
-                profile.initialTrust +
-                  effectTrust +
-                  collectionTrust +
-                  ruleTrust
-              )
-            ),
+      trust: Math.max(
+        5,
+        Math.min(
+          90,
+          profile.initialTrust +
+            confidenceBonus +
+            effectTrust +
+            collectionTrust +
+            ruleTrust -
+            priceTrustPenalty -
+            tagTrustPenalty
+        )
+      ),
       history: [],
       unread: true,
       replied: false,
@@ -853,10 +864,7 @@ export const Game = {
     }
 
     if (chat.trust >= 70) {
-      let salePrice =
-        listing.price <= listing.priceRange[1] * 1.15
-          ? listing.price
-          : roundToTen(listing.priceRange[1]);
+      let salePrice = listing.price;
       salePrice = applyBuyerPriceConcession(salePrice, chat);
       salePrice = applySaleModifiers(salePrice, listingItem);
       const netSale = calculateNetSale(salePrice, listingItem);
@@ -875,12 +883,12 @@ export const Game = {
         success: true,
         amount: netSale,
         title: "买家接受报价",
-        text: `商品成交，收入 ${formatCurrency(netSale)}。`
+        text: `商品按你设定的 ${formatCurrency(
+          salePrice
+        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`
       };
     } else if (chat.trust >= 35) {
-      let salePrice = roundToTen(
-        Math.min(listing.price, listing.priceRange[0])
-      );
+      let salePrice = listing.price;
       salePrice = applyBuyerPriceConcession(salePrice, chat);
       salePrice = applySaleModifiers(salePrice, listingItem);
       const netSale = calculateNetSale(salePrice, listingItem);
@@ -899,7 +907,9 @@ export const Game = {
         success: true,
         amount: netSale,
         title: "买家压价成交",
-        text: `经过谈判，商品以 ${formatCurrency(netSale)} 成交。`
+        text: `经过谈判，商品仍按 ${formatCurrency(
+          salePrice
+        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`
       };
     } else {
       state.reputation = Math.max(0, state.reputation - 2);
@@ -1066,10 +1076,7 @@ export const Game = {
       if (obstruction) {
         saleMessage = obstruction.text;
       } else if (chat.trust >= 70) {
-        let salePrice =
-          listing.price <= listing.priceRange[1] * 1.15
-            ? listing.price
-            : roundToTen(listing.priceRange[1]);
+        let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
         salePrice = applySaleModifiers(salePrice, listingItem);
         const netSale = calculateNetSale(salePrice, listingItem);
@@ -1086,11 +1093,11 @@ export const Game = {
           recordArchetypeProgress("risk", 2);
         }
         recordArchetypeProgress("storage");
-        saleMessage = `商品成交，收入 ${formatCurrency(salePrice)}。`;
+        saleMessage = `商品按你设定的 ${formatCurrency(
+          salePrice
+        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`;
       } else if (chat.trust >= 35) {
-        let salePrice = roundToTen(
-          Math.min(listing.price, listing.priceRange[0])
-        );
+        let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
         salePrice = applySaleModifiers(salePrice, listingItem);
         const netSale = calculateNetSale(salePrice, listingItem);
@@ -1107,7 +1114,9 @@ export const Game = {
           recordArchetypeProgress("risk", 2);
         }
         recordArchetypeProgress("storage");
-        saleMessage = `买家压价成交，收入 ${formatCurrency(salePrice)}。`;
+        saleMessage = `经过谈判，商品仍按 ${formatCurrency(
+          salePrice
+        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`;
       } else {
         listing.status =
           state.buyerAttempts < 3 ? "active" : "failed";
@@ -1247,6 +1256,19 @@ export const Game = {
       ...(state.guidePopupDismissedSteps ?? []),
       step
     ]);
+    commit();
+  },
+
+  toggleWindowLayoutPreservation() {
+    state.preserveWindowLayout = !state.preserveWindowLayout;
+    state.lastMessage = state.preserveWindowLayout
+      ? "休眠后会恢复今天的窗口布局。"
+      : "已关闭窗口布局保留。";
+    commit();
+  },
+
+  saveWindowLayout(layout) {
+    state.savedWindowLayout = Array.isArray(layout) ? layout : [];
     commit();
   },
 
@@ -1395,6 +1417,8 @@ function createInitialState() {
     },
     guideStep: "MAIL",
     guidePopupDismissedSteps: [],
+    preserveWindowLayout: false,
+    savedWindowLayout: [],
     calendarOpened: false,
     folderOpened: false,
     newsRead: false,
@@ -1485,6 +1509,10 @@ function normalizeState(parsed) {
     parsed.guidePopupDismissedSteps
   )
     ? parsed.guidePopupDismissedSteps
+    : [];
+  parsed.preserveWindowLayout = Boolean(parsed.preserveWindowLayout);
+  parsed.savedWindowLayout = Array.isArray(parsed.savedWindowLayout)
+    ? parsed.savedWindowLayout
     : [];
 
   parsed.nextPayment ??= {
@@ -1787,6 +1815,46 @@ function normalizeItemData(item) {
   return item;
 }
 
+function propagateTypeKnowledge(sourceItem, keyword, sourceFact) {
+  if (!sourceFact || sourceFact.kind === "code") return;
+  const typeKey = sourceItem.templateId ?? sourceItem.name;
+  if (!typeKey) return;
+  getAllOwnedItems().forEach((candidate) => {
+    if (candidate === sourceItem) return;
+    normalizeItemData(candidate);
+    const typeCandidateKey = candidate.templateId ?? candidate.name;
+    if (typeCandidateKey !== typeKey) return;
+    const matchingFact = candidate.facts.find(
+      (fact) =>
+        fact.kind === sourceFact.kind &&
+        fact.keyword === keyword
+    );
+    if (!matchingFact) return;
+    matchingFact.discovered = true;
+    matchingFact.value = sourceFact.value;
+    if (matchingFact.kind === "source") {
+      candidate.discoveredSource = true;
+    }
+    candidate.unlockedTags = unique([
+      ...(candidate.unlockedTags ?? []),
+      ...(sourceItem.unlockedTags ?? [])
+    ]);
+  });
+}
+
+function getAllOwnedItems() {
+  const items = [
+    ...state.inventory,
+    ...state.folder,
+    ...(state.auction?.items ?? []),
+    ...state.listings.map((listing) => listing.itemSnapshot)
+  ];
+  const boxItems = state.inventory.flatMap((item) =>
+    item.type === "box" && Array.isArray(item.items) ? item.items : []
+  );
+  return [...items, ...boxItems].filter(Boolean);
+}
+
 function getFactLabel(kind) {
   if (kind === "code") return "具体编号";
   if (kind === "name") return "磨损姓名";
@@ -1805,11 +1873,30 @@ function getFactValue(item, keyword, kind) {
   if (kind === "code") return item.code;
   if (kind === "source") return getItemProvenance(item);
   if (kind === "name") {
-    const surnames = ["L. M.", "A. K.", "R. S.", "J. W.", "M. D."];
-    return surnames[Math.floor(Math.random() * surnames.length)];
+    const initial = keyword.match(/\b[A-Z]\b/)?.[0];
+    const namesByInitial = {
+      L: ["L. M.", "L. K.", "L. S."],
+      A: ["A. K.", "A. R.", "A. W."],
+      R: ["R. S.", "R. M.", "R. L."],
+      J: ["J. W.", "J. K.", "J. M."],
+      M: ["M. D.", "M. R.", "M. S."]
+    };
+    const pool =
+      namesByInitial[initial] ??
+      Object.values(namesByInitial).flat();
+    const familyKey = item.templateId ?? item.name ?? keyword;
+    return pool[hashString(familyKey) % pool.length];
   }
   if (kind === "feature") return `${keyword}`;
   return keyword;
+}
+
+function hashString(value) {
+  let hash = 0;
+  for (const character of String(value)) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return hash;
 }
 
 function makeItemCode(item) {
@@ -1854,16 +1941,20 @@ function refreshActiveRules() {
 
 function selectBuyerQuestions(item) {
   normalizeItemData(item);
-  const discoveredFacts = shuffle(
-    [...(item?.facts ?? [])].filter((fact) => fact.discovered)
+  const informationFacts = shuffle(
+    [...(item?.facts ?? [])].filter((fact) =>
+      ["code", "name", "source", "feature"].includes(fact.kind)
+    )
   ).slice(0, 2);
   const templates = STAGE_TWO_DATA.buyerQuestionTemplates;
-  const factualQuestions = discoveredFacts.map((fact) => {
+  const factualQuestions = informationFacts.map((fact) => {
     const template = templates[fact.kind] ?? templates.proof;
     return {
       id: fact.id,
       kind: fact.kind,
-      text: template.text,
+      text: fact.discovered
+        ? template.text
+        : `${template.text} 交易前需要你给出准确答案。`,
       replies: buildRepliesForFact(fact)
     };
   });
@@ -1879,6 +1970,25 @@ function selectBuyerQuestions(item) {
 }
 
 function buildRepliesForFact(fact) {
+  if (!fact.discovered) {
+    return shuffle([
+      {
+        id: "not_researched",
+        text: "我没有在万物通核实过这项信息。",
+        trust: -14
+      },
+      {
+        id: "guess",
+        text: "标签大致是这样，但我不能确认。",
+        trust: -20
+      },
+      {
+        id: "overclaim",
+        text: "肯定没问题，不用再查。",
+        trust: -26
+      }
+    ]);
+  }
   const correct = String(fact.value ?? "无法确认");
   if (["record", "condition", "packaging", "owner", "urgency"].includes(fact.kind)) {
     const oppositeMap = {
@@ -1938,15 +2048,18 @@ function shuffle(items) {
   return items;
 }
 
-function createAuctionBoxEntry() {
+function createAuctionBoxEntry(auction) {
+  const source = auction?.items?.length
+    ? auction.items
+    : STAGE_TWO_DATA.auctionBox.items;
   return {
     id: `box_${Date.now().toString(36)}`,
     type: "box",
     name: "无人认领行李箱",
-    destination: STAGE_TWO_DATA.auctionBox.destination,
-    appearance: STAGE_TWO_DATA.auctionBox.appearance,
+    destination: auction?.destination ?? STAGE_TWO_DATA.auctionBox.destination,
+    appearance: auction?.appearance ?? STAGE_TWO_DATA.auctionBox.appearance,
     opened: false,
-    items: STAGE_TWO_DATA.auctionBox.items.map((item) => ({ ...item }))
+    items: source.map((item) => JSON.parse(JSON.stringify(item)))
   };
 }
 
@@ -2175,6 +2288,35 @@ function resolveTradeObstruction(chat, listing) {
         true
       );
     }
+  }
+
+  const effectivePrice = Math.max(
+    10,
+    listing.price - (Number(chat.priceConcession) || 0)
+  );
+  const suggestedMax = Math.max(1, listing.priceRange?.[1] ?? 1);
+  const priceRatio = effectivePrice / suggestedMax;
+  const priceFailureChance =
+    priceRatio > 1 ? Math.min(0.72, (priceRatio - 1) * 0.5) : 0;
+  const tagFailureChance =
+    listing.confidence === "low"
+      ? hasActiveRule("strict_review")
+        ? 0.28
+        : 0.18
+      : 0;
+  const combinedRisk =
+    1 - (1 - priceFailureChance) * (1 - tagFailureChance);
+  if (combinedRisk > 0 && Math.random() < combinedRisk) {
+    state.reputation = Math.max(0, state.reputation - 2);
+    return failListingTrade(
+      listing,
+      "买家放弃购买",
+      listing.confidence === "low" && priceRatio > 1
+        ? "买家认为标签未经核实，而且报价明显高于参考区间，因此终止了交易。"
+        : listing.confidence === "low"
+          ? "买家无法确认标签信息，最终放弃了交易。"
+          : "买家认为报价明显高于参考区间，最终放弃了交易。"
+    );
   }
 
   if (chat.discountRefused && chat.buyer?.wantsDiscount) {

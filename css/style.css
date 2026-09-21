@@ -1793,6 +1793,24 @@ input:focus-visible {
   cursor: pointer;
 }
 
+.layout-button {
+  display: flex;
+  height: 34px;
+  padding: 3px 7px;
+  gap: 4px;
+  align-items: center;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.layout-button.is-active {
+  border-style: inset;
+  background: #d9efdc;
+  color: #17652d;
+}
+
 .sleep-button:disabled {
   color: #777;
   cursor: not-allowed;
@@ -3091,6 +3109,34 @@ button.keyword-chip {
 .listing-fake-note {
   color: #8b3a16 !important;
   font-weight: 700;
+}
+
+.listing-verification-warning {
+  margin-top: 8px;
+  padding: 8px 9px;
+  border-left: 4px solid #a31919;
+  background: #ffe7e2;
+  color: #721111;
+  line-height: 1.5;
+}
+
+.listing-confidence-note {
+  color: #a31919 !important;
+  font-weight: 700;
+}
+
+.price-guidance {
+  display: block;
+  margin-top: 5px;
+  color: #555;
+}
+
+.listing-price-warning {
+  margin-top: 7px;
+  padding: 8px 9px;
+  border-left: 4px solid #9a5d00;
+  background: #fff1c9;
+  line-height: 1.5;
 }
 
 .folder-content {
