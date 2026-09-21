@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-8";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-9";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -290,6 +290,11 @@ export const Game = {
 
   acknowledgeTroublePopup() {
     state.troublePopupOpen = false;
+    commit();
+  },
+
+  acknowledgeTroubleNotice() {
+    state.troubleNotice = null;
     commit();
   },
 
@@ -866,7 +871,6 @@ export const Game = {
     if (chat.trust >= 70) {
       let salePrice = listing.price;
       salePrice = applyBuyerPriceConcession(salePrice, chat);
-      salePrice = applySaleModifiers(salePrice, listingItem);
       const netSale = calculateNetSale(salePrice, listingItem);
       state.cash += netSale;
       listing.status = "sold";
@@ -890,7 +894,6 @@ export const Game = {
     } else if (chat.trust >= 35) {
       let salePrice = listing.price;
       salePrice = applyBuyerPriceConcession(salePrice, chat);
-      salePrice = applySaleModifiers(salePrice, listingItem);
       const netSale = calculateNetSale(salePrice, listingItem);
       state.cash += netSale;
       listing.status = "sold";
@@ -1078,7 +1081,6 @@ export const Game = {
       } else if (chat.trust >= 70) {
         let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
-        salePrice = applySaleModifiers(salePrice, listingItem);
         const netSale = calculateNetSale(salePrice, listingItem);
         state.cash += netSale;
         recordActivity("在线商品成交", netSale);
@@ -1099,7 +1101,6 @@ export const Game = {
       } else if (chat.trust >= 35) {
         let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
-        salePrice = applySaleModifiers(salePrice, listingItem);
         const netSale = calculateNetSale(salePrice, listingItem);
         state.cash += netSale;
         recordActivity("在线商品成交", netSale);
@@ -1259,16 +1260,24 @@ export const Game = {
     commit();
   },
 
-  toggleWindowLayoutPreservation() {
-    state.preserveWindowLayout = !state.preserveWindowLayout;
-    state.lastMessage = state.preserveWindowLayout
-      ? "休眠后会恢复今天的窗口布局。"
-      : "已关闭窗口布局保留。";
-    commit();
-  },
-
-  saveWindowLayout(layout) {
-    state.savedWindowLayout = Array.isArray(layout) ? layout : [];
+  unlistListing(listingId) {
+    const listing = state.listings.find(
+      (candidate) =>
+        candidate.id === listingId && candidate.status === "active"
+    );
+    if (!listing) return;
+    listing.status = "unlisted";
+    state.buyerSchedule = (state.buyerSchedule ?? []).filter(
+      (entry) => entry.listingId !== listing.id
+    );
+    if (state.buyerChat?.listingId === listing.id) {
+      state.buyerChat = null;
+    }
+    if (state.activeListingId === listing.id) {
+      state.activeListingId = null;
+    }
+    restoreListingItem(listing);
+    state.lastMessage = "商品已经下架，可以回到库存重新调整后再次上架。";
     commit();
   },
 
@@ -1417,8 +1426,6 @@ function createInitialState() {
     },
     guideStep: "MAIL",
     guidePopupDismissedSteps: [],
-    preserveWindowLayout: false,
-    savedWindowLayout: [],
     calendarOpened: false,
     folderOpened: false,
     newsRead: false,
@@ -1471,6 +1478,7 @@ function createInitialState() {
     loanTakenToday: false,
     troubleReductionUsed: false,
     troublePopupOpen: false,
+    troubleNotice: null,
     troubleReasons: []
   };
 }
@@ -1510,11 +1518,6 @@ function normalizeState(parsed) {
   )
     ? parsed.guidePopupDismissedSteps
     : [];
-  parsed.preserveWindowLayout = Boolean(parsed.preserveWindowLayout);
-  parsed.savedWindowLayout = Array.isArray(parsed.savedWindowLayout)
-    ? parsed.savedWindowLayout
-    : [];
-
   parsed.nextPayment ??= {
     amount: CONFIG.firstPayment,
     dueDay: CONFIG.paymentIntervalDays
@@ -1588,6 +1591,7 @@ function normalizeState(parsed) {
   if (parsed.listingDraft) parsed.listingDraft.fakeItemId ??= null;
   parsed.summaryOpen ??= false;
   parsed.troublePopupOpen ??= false;
+  parsed.troubleNotice ??= null;
   parsed.newsVisible ??= false;
   parsed.newsRead ??= false;
   parsed.news = Array.isArray(parsed.news)
@@ -1970,25 +1974,6 @@ function selectBuyerQuestions(item) {
 }
 
 function buildRepliesForFact(fact) {
-  if (!fact.discovered) {
-    return shuffle([
-      {
-        id: "not_researched",
-        text: "我没有在万物通核实过这项信息。",
-        trust: -14
-      },
-      {
-        id: "guess",
-        text: "标签大致是这样，但我不能确认。",
-        trust: -20
-      },
-      {
-        id: "overclaim",
-        text: "肯定没问题，不用再查。",
-        trust: -26
-      }
-    ]);
-  }
   const correct = String(fact.value ?? "无法确认");
   if (["record", "condition", "packaging", "owner", "urgency"].includes(fact.kind)) {
     const oppositeMap = {
@@ -2298,24 +2283,14 @@ function resolveTradeObstruction(chat, listing) {
   const priceRatio = effectivePrice / suggestedMax;
   const priceFailureChance =
     priceRatio > 1 ? Math.min(0.72, (priceRatio - 1) * 0.5) : 0;
-  const tagFailureChance =
-    listing.confidence === "low"
-      ? hasActiveRule("strict_review")
-        ? 0.28
-        : 0.18
-      : 0;
-  const combinedRisk =
-    1 - (1 - priceFailureChance) * (1 - tagFailureChance);
-  if (combinedRisk > 0 && Math.random() < combinedRisk) {
+  if (priceFailureChance > 0 && Math.random() < priceFailureChance) {
     state.reputation = Math.max(0, state.reputation - 2);
     return failListingTrade(
       listing,
       "买家放弃购买",
-      listing.confidence === "low" && priceRatio > 1
+      listing.confidence === "low"
         ? "买家认为标签未经核实，而且报价明显高于参考区间，因此终止了交易。"
-        : listing.confidence === "low"
-          ? "买家无法确认标签信息，最终放弃了交易。"
-          : "买家认为报价明显高于参考区间，最终放弃了交易。"
+        : "买家认为报价明显高于参考区间，最终放弃了交易。"
     );
   }
 
@@ -2481,6 +2456,12 @@ function recordActivity(label, amount = 0) {
 function recordTrouble(amount, reason) {
   const before = state.trouble;
   state.trouble = Math.min(CONFIG.maxTrouble, state.trouble + amount);
+  state.troubleNotice = {
+    id: `trouble_notice_${Date.now().toString(36)}`,
+    label: reason,
+    amount,
+    total: state.trouble
+  };
   state.troubleReasons.unshift({
     id: `trouble_${Date.now().toString(36)}_${state.troubleReasons.length}`,
     label: reason,

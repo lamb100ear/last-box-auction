@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-8";
-import { Game, formatCurrency } from "./game.js?v=20260920-8";
+} from "./data.js?v=20260920-9";
+import { Game, formatCurrency } from "./game.js?v=20260920-9";
 
 let root;
 let workspace;
@@ -65,23 +65,15 @@ const GUIDE_STEPS = [
   {
     id: "SHOP",
     number: 5,
-    title: "前往我的店铺",
-    message: "打开我的店铺，查看库存中的物品并点开物品详情。",
+    title: "先查看物品详情",
+    message: "打开我的店铺，点击库存物品的“查看”。详情中的黄色关键词可以打开万物通搜索。",
     target: "shop",
-    buttonText: "打开我的店铺"
-  },
-  {
-    id: "SEARCH",
-    number: 6,
-    title: "用万物通搜索关键词",
-    message: "点击物品详情中的黄色关键词，在万物通确认资料和价格线索。",
-    target: "universal",
-    action: "guide-search-keyword",
-    buttonText: "搜索关键词"
+    action: "guide-view-item",
+    buttonText: "查看物品详情"
   },
   {
     id: "LIST",
-    number: 7,
+    number: 6,
     title: "选择标签并上架",
     message: "返回我的店铺，选择两个标签、售价和上架日期后发布。",
     target: "shop",
@@ -89,7 +81,7 @@ const GUIDE_STEPS = [
   },
   {
     id: "FOLDER",
-    number: 8,
+    number: 7,
     title: "查看收藏文件夹",
     message: "打开文件夹查看自留藏品和已经生效的属性。",
     target: "folder",
@@ -214,14 +206,6 @@ function enterDesktop() {
   refreshFromState();
   if (Game.getState().guideStep === "MAIL" && !windowState.has("mail")) {
     openApp("mail");
-  }
-  if (
-    Game.getState().preserveWindowLayout &&
-    Game.getState().savedWindowLayout?.length
-  ) {
-    window.setTimeout(() => {
-      restoreWindowLayout(Game.getState().savedWindowLayout);
-    }, 50);
   }
 }
 
@@ -386,17 +370,6 @@ function renderDesktop() {
             <strong id="taskbar-time">21:00</strong>
           </span>
           <button
-            class="layout-button ${state.preserveWindowLayout ? "is-active" : ""}"
-            id="layout-retention-button"
-            type="button"
-            data-action="toggle-window-layout"
-            aria-pressed="${state.preserveWindowLayout ? "true" : "false"}"
-            title="保留窗口布局"
-          >
-            <span aria-hidden="true">▦</span>
-            <b>${state.preserveWindowLayout ? "保留中" : "保留布局"}</b>
-          </button>
-          <button
             class="sleep-button"
             id="sleep-button"
             type="button"
@@ -474,6 +447,14 @@ function renderDesktop() {
         <button type="button" class="legacy-button" data-action="open-calendar-from-payment">
           前往还款
         </button>
+      </aside>
+
+      <aside class="trouble-toast is-hidden" id="trouble-toast" aria-live="assertive">
+        <header>
+          <strong>麻烦值上升</strong>
+          <button type="button" data-action="dismiss-trouble-notice" aria-label="关闭麻烦值提醒">×</button>
+        </header>
+        <div id="trouble-toast-content"></div>
       </aside>
 
       <div class="loan-default-overlay is-hidden" id="loan-default-overlay">
@@ -703,6 +684,10 @@ function handleClick(event) {
     Game.acknowledgeTroublePopup();
     refreshFromState();
   }
+  if (action === "dismiss-trouble-notice") {
+    Game.acknowledgeTroubleNotice();
+    refreshFromState();
+  }
   if (action === "police-lawyer") {
     Game.resolvePoliceAction("lawyer");
     refreshFromState();
@@ -765,18 +750,18 @@ function handleClick(event) {
   if (action === "close-mail") {
     closeWindow("mail");
   }
-  if (action === "toggle-window-layout") {
-    Game.toggleWindowLayoutPreservation();
-    refreshFromState();
-  }
-  if (action === "guide-search-keyword") {
-    const keywordButton = document.querySelector(
-      '.os-window[data-window-id="item-detail"] .keyword-chip.is-searchable'
+  if (action === "guide-view-item") {
+    const shopWindow = document.querySelector(
+      '.os-window[data-window-id="shop"]'
     );
-    if (keywordButton) {
-      keywordButton.click();
+    if (!shopWindow) {
+      openApp("shop");
+      refreshFromState();
     } else {
-      openApp("universal");
+      const viewButton = shopWindow.querySelector(
+        '[data-action="view-item"]'
+      );
+      viewButton?.click();
     }
   }
   if (action === "dismiss-keyword-tip") {
@@ -843,6 +828,10 @@ function handleClick(event) {
   if (action === "view-listing-item") {
     Game.viewListingItem(itemId);
     openApp("item-detail");
+    refreshFromState();
+  }
+  if (action === "unlist-listing") {
+    Game.unlistListing(itemId);
     refreshFromState();
   }
   if (action === "search-keyword") {
@@ -956,11 +945,11 @@ function getGuideAnchor(guide) {
       '.dock-button[data-open-app="calendar"]'
     );
   }
-  if (guide.id === "SEARCH") {
-    const keywordButton = document.querySelector(
-      '.os-window[data-window-id="item-detail"] .keyword-chip.is-searchable'
+  if (guide.id === "SHOP") {
+    const viewButton = document.querySelector(
+      '.os-window[data-window-id="shop"] [data-action="view-item"]'
     );
-    if (keywordButton) return keywordButton;
+    if (viewButton) return viewButton;
   }
   if (guide.target) {
     return (
@@ -1054,6 +1043,7 @@ function hasBlockingOverlay() {
     "#loan-payment-overlay",
     "#loan-default-overlay",
     "#pause-overlay",
+    "#trouble-toast",
     "#trouble-overlay",
     "#police-overlay",
     "#threat-overlay",
@@ -1067,9 +1057,6 @@ function hasBlockingOverlay() {
 }
 
 function performSleep() {
-  if (Game.getState().preserveWindowLayout) {
-    Game.saveWindowLayout(captureWindowLayout());
-  }
   Game.sleep();
   newsSummaryVisible = false;
   newsMinimized = false;
@@ -1077,75 +1064,6 @@ function performSleep() {
   newsExpanded = false;
   closeAllWindows();
   refreshFromState();
-  if (
-    Game.getState().preserveWindowLayout &&
-    Game.getState().savedWindowLayout?.length
-  ) {
-    window.setTimeout(() => {
-      restoreWindowLayout(Game.getState().savedWindowLayout);
-    }, 80);
-  }
-}
-
-function captureWindowLayout() {
-  return [...windowState.values()]
-    .filter((entry) => entry.app.id !== "item-detail")
-    .sort(
-      (left, right) =>
-        Number(left.element.style.zIndex) -
-        Number(right.element.style.zIndex)
-    )
-    .map((entry) => ({
-      appId: entry.app.id,
-      left: entry.element.offsetLeft,
-      top: entry.element.offsetTop,
-      width: entry.element.offsetWidth,
-      height: entry.element.offsetHeight,
-      minimized: entry.minimized,
-      maximized: entry.maximized
-    }));
-}
-
-function restoreWindowLayout(layout) {
-  if (!Array.isArray(layout) || !layout.length) return;
-  closeAllWindows();
-  layout.forEach((saved) => {
-    const app = DESKTOP_APPS.find(
-      (candidate) => candidate.id === saved.appId
-    );
-    if (!app || app.id === "item-detail") return;
-    openApp(app.id);
-    const entry = windowState.get(app.id);
-    if (!entry) return;
-    const maxWidth = Math.max(280, workspace.clientWidth - 16);
-    const maxHeight = Math.max(220, workspace.clientHeight - 16);
-    const width = clamp(Number(saved.width) || app.defaultSize.width, 280, maxWidth);
-    const height = clamp(Number(saved.height) || app.defaultSize.height, 220, maxHeight);
-    const left = clamp(
-      Number(saved.left) || 0,
-      0,
-      Math.max(0, workspace.clientWidth - width)
-    );
-    const top = clamp(
-      Number(saved.top) || 0,
-      0,
-      Math.max(0, workspace.clientHeight - height)
-    );
-    Object.assign(entry.element.style, {
-      left: `${left}px`,
-      top: `${top}px`,
-      width: `${width}px`,
-      height: `${height}px`
-    });
-    if (saved.maximized) toggleMaximizeWindow(app.id);
-    if (saved.minimized) minimizeWindow(app.id);
-  });
-  const lastVisible = layout
-    .filter((saved) => !saved.minimized)
-    .map((saved) => saved.appId)
-    .filter((appId) => windowState.has(appId))
-    .at(-1);
-  if (lastVisible) focusWindow(lastVisible);
 }
 
 function handleDocumentPointerDown(event) {
@@ -1399,7 +1317,6 @@ function updateTaskbar() {
   const cashNode = document.querySelector("#taskbar-cash");
   const troubleNode = document.querySelector("#taskbar-trouble");
   const reputationNode = document.querySelector("#taskbar-reputation");
-  const layoutNode = document.querySelector("#layout-retention-button");
   if (cashNode) cashNode.textContent = formatCurrency(state.cash);
   if (troubleNode) {
     troubleNode.textContent = `${state.trouble} / ${CONFIG.maxTrouble}`;
@@ -1413,22 +1330,6 @@ function updateTaskbar() {
     );
   }
   if (reputationNode) reputationNode.textContent = String(state.reputation);
-  if (layoutNode) {
-    layoutNode.classList.toggle(
-      "is-active",
-      Boolean(state.preserveWindowLayout)
-    );
-    layoutNode.setAttribute(
-      "aria-pressed",
-      state.preserveWindowLayout ? "true" : "false"
-    );
-    const label = layoutNode.querySelector("b");
-    if (label) {
-      label.textContent = state.preserveWindowLayout
-        ? "保留中"
-        : "保留布局";
-    }
-  }
 }
 
 function syncDesktopState() {
@@ -1452,6 +1353,8 @@ function syncDesktopState() {
   const loanDefaultReason = document.querySelector("#loan-default-reason");
   const troubleOverlay = document.querySelector("#trouble-overlay");
   const troubleContent = document.querySelector("#trouble-overlay-content");
+  const troubleToast = document.querySelector("#trouble-toast");
+  const troubleToastContent = document.querySelector("#trouble-toast-content");
   const policeOverlay = document.querySelector("#police-overlay");
   const policeContent = document.querySelector("#police-overlay-content");
   const threatOverlay = document.querySelector("#threat-overlay");
@@ -1499,8 +1402,7 @@ function syncDesktopState() {
     if (currentGuide && shouldShow) {
       guideStep.textContent = `第 ${currentGuide.number} 步`;
       guideTitle.textContent = currentGuide.title;
-      guideMessage.textContent =
-        Game.getGuideMessage() || currentGuide.message;
+      guideMessage.textContent = currentGuide.message;
       guideProgress.textContent = `${currentGuide.number} / ${GUIDE_STEPS.length}`;
       guideAction.innerHTML = currentGuide.action
         ? `<button type="button" class="legacy-button primary" data-action="${currentGuide.action}">${escapeHtml(
@@ -1765,6 +1667,25 @@ function syncDesktopState() {
           <button type="button" class="legacy-button primary" data-action="open-calendar-from-trouble">前往日历</button>
           <button type="button" class="legacy-button" data-action="close-trouble">稍后处理</button>
         </div>
+      `;
+    }
+  }
+
+  if (troubleToast && troubleToastContent) {
+    const notice = state.troubleNotice;
+    const shouldShowNotice =
+      Boolean(notice) &&
+      !state.troublePopupOpen &&
+      !state.loanDefaulted;
+    troubleToast.classList.toggle("is-hidden", !shouldShowNotice);
+    if (shouldShowNotice) {
+      troubleToastContent.innerHTML = `
+        <div class="trouble-toast-value">
+          <strong>+${notice.amount}</strong>
+          <span>当前 ${notice.total} / ${CONFIG.maxTrouble}</span>
+        </div>
+        <p>${escapeHtml(notice.label)}</p>
+        <small>可以在日历中付费处理麻烦值。</small>
       `;
     }
   }
@@ -2511,7 +2432,7 @@ function renderListingEditor() {
             ${
               draft.tags.length === 2 && !tagsVerified
                 ? `<div class="listing-verification-warning">
-                    当前包含未经核实的标签。买家询问编号或来源时你无法给出准确答案，买家信任和交易成功率都会降低。
+                    当前包含未经核实的标签，买家初始信任会降低。买家仍会询问编号或来源，你需要根据已有信息猜测，猜错会进一步降低信任。
                   </div>`
                 : ""
             }
@@ -2641,6 +2562,16 @@ function renderListingRow(listing) {
           data-action="view-listing-item"
           data-item-id="${listing.id}"
         >查看物品</button>
+        ${
+          listing.status === "active"
+            ? `<button
+                type="button"
+                class="legacy-button"
+                data-action="unlist-listing"
+                data-item-id="${listing.id}"
+              >下架并重新编辑</button>`
+            : ""
+        }
       </div>
       <div class="listing-price">${formatCurrency(listing.price)}</div>
       <div class="listing-date">第 ${listing.listingDay} 天</div>

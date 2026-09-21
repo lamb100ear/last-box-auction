@@ -1093,6 +1093,18 @@ input:focus-visible {
   }
 }
 
+@keyframes troubleToastIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @keyframes outbidFlash {
   0%,
   100% {
@@ -1793,24 +1805,6 @@ input:focus-visible {
   cursor: pointer;
 }
 
-.layout-button {
-  display: flex;
-  height: 34px;
-  padding: 3px 7px;
-  gap: 4px;
-  align-items: center;
-  border: 2px outset var(--win-gray);
-  background: var(--win-gray);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.layout-button.is-active {
-  border-style: inset;
-  background: #d9efdc;
-  color: #17652d;
-}
-
 .sleep-button:disabled {
   color: #777;
   cursor: not-allowed;
@@ -1960,6 +1954,68 @@ input:focus-visible {
 .loan-overdue-alert p {
   margin: 7px 0 10px;
   line-height: 1.5;
+}
+
+.trouble-toast {
+  position: absolute;
+  z-index: 82;
+  top: 12px;
+  right: 12px;
+  width: min(360px, calc(100vw - 24px));
+  border: 3px double #6f0000;
+  background: #fff0e8;
+  box-shadow: 5px 6px 0 rgba(0, 0, 0, 0.34);
+  animation: troubleToastIn 500ms ease-out;
+}
+
+.loan-overdue-alert:not(.is-hidden) + .trouble-toast {
+  top: 158px;
+}
+
+.trouble-toast > header {
+  display: flex;
+  padding: 5px 6px 5px 9px;
+  align-items: center;
+  justify-content: space-between;
+  color: #fff;
+  background: #a31515;
+}
+
+.trouble-toast > header button {
+  width: 20px;
+  height: 19px;
+  padding: 0;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+}
+
+#trouble-toast-content {
+  display: grid;
+  padding: 12px;
+  gap: 7px;
+  border: 3px inset var(--win-gray);
+}
+
+#trouble-toast-content p {
+  margin: 0;
+  color: #7b1111;
+  font-weight: 700;
+}
+
+#trouble-toast-content small {
+  color: #555;
+}
+
+.trouble-toast-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.trouble-toast-value strong {
+  color: #a31515;
+  font-size: 24px;
 }
 
 .loan-default-window {
