@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-9";
-import { Game, formatCurrency } from "./game.js?v=20260920-9";
+} from "./data.js?v=20260920-10";
+import { Game, formatCurrency } from "./game.js?v=20260920-10";
 
 let root;
 let workspace;
@@ -565,6 +565,14 @@ function handleInputChange(event) {
   if (valueNode) {
     valueNode.textContent = formatCurrency(
       Game.getState().listingDraft?.price ?? Number(input.value)
+    );
+  }
+  const priceSection = input.closest(".listing-section");
+  const warning = priceSection?.querySelector("[data-price-warning]");
+  if (warning) {
+    warning.classList.toggle(
+      "is-hidden",
+      Number(input.value) <= Number(input.dataset.suggestedMax)
     );
   }
 }
@@ -1397,6 +1405,7 @@ function syncDesktopState() {
     );
     const shouldShow =
       Boolean(currentGuide) &&
+      currentGuide.id !== "SHOP" &&
       !(state.guidePopupDismissedSteps ?? []).includes(state.guideStep);
     guidePopup.classList.toggle("is-hidden", !shouldShow);
     if (currentGuide && shouldShow) {
@@ -2239,7 +2248,9 @@ function renderShopTab(tab) {
       <section class="shop-content">
         ${
           state.inventory.length
-            ? `<div class="inventory-grid">${state.inventory.map(renderInventoryItem).join("")}</div>`
+            ? `<div class="inventory-grid">${state.inventory
+                .map((item, index) => renderInventoryItem(item, index))
+                .join("")}</div>`
             : `<div class="empty-panel">库存为空</div>`
         }
       </section>
@@ -2281,9 +2292,13 @@ function renderShopTab(tab) {
   `;
 }
 
-function renderInventoryItem(item) {
+function renderInventoryItem(item, index = 0) {
   const isBox = item.type === "box";
   const tagSource = item.unlockedTags?.length ? item.unlockedTags : item.keywords ?? [];
+  const showViewGuide =
+    Game.getState().guideStep === "SHOP" &&
+    index === 0 &&
+    !isBox;
   return `
     <article class="inventory-card ${item.category === "special" ? "special-item" : ""}">
       ${
@@ -2317,9 +2332,21 @@ function renderInventoryItem(item) {
              }`
       }
       <div class="inventory-actions">
-        <button type="button" class="legacy-button" data-action="view-item" data-item-id="${item.id}">
-          ${isBox ? "打开" : "查看"}
-        </button>
+        <div class="inventory-view-action ${showViewGuide ? "has-guide" : ""}">
+          <button type="button" class="legacy-button ${
+            showViewGuide ? "is-guided" : ""
+          }" data-action="view-item" data-item-id="${item.id}">
+            ${isBox ? "打开" : "查看"}
+          </button>
+          ${
+            showViewGuide
+              ? `<span class="inventory-view-tip">
+                  点击查看物品详情
+                  <i aria-hidden="true"></i>
+                </span>`
+              : ""
+          }
+        </div>
         ${
           !isBox && item.status !== "listed"
             ? item.category === "special"
@@ -2357,11 +2384,12 @@ function renderListingEditor() {
   const selectedFakeProduct = STAGE_TWO_DATA.mallProducts.find(
     (product) => product.id === draft.fakeItemId
   );
-  const priceAboveSuggested = draft.price > priceRange[1];
-  const minPrice = priceRange[0];
-  const maxPrice = Math.round(
-    priceRange[1] * 1.6 * (selectedFakeProduct?.priceMultiplier ?? 1)
-  );
+  const priceMultiplier = selectedFakeProduct?.priceMultiplier ?? 1;
+  const suggestedMin = Math.round(priceRange[0] * priceMultiplier);
+  const suggestedMax = Math.round(priceRange[1] * priceMultiplier);
+  const priceAboveSuggested = draft.price > suggestedMax;
+  const minPrice = suggestedMin;
+  const maxPrice = Math.round(suggestedMax * 1.6);
   const researchedTags = new Set(item?.unlockedTags ?? []);
   const baseTags = new Set(["旧物", "来源不明"]);
   const tagsVerified = draft.tags.every(
@@ -2486,21 +2514,22 @@ function renderListingEditor() {
                 step="10"
                 value="${draft.price}"
                 data-field="listing-price"
+                data-suggested-max="${suggestedMax}"
               />
               <strong>${formatCurrency(draft.price)}</strong>
             </div>
             <small class="price-guidance">
-              建议售价：${formatCurrency(priceRange[0])} - ${formatCurrency(
-                priceRange[1]
+              建议售价：${formatCurrency(suggestedMin)} - ${formatCurrency(
+                suggestedMax
               )}
             </small>
-            ${
-              priceAboveSuggested
-                ? `<div class="listing-price-warning">
-                    当前售价高于建议上限，成交后仍按你设定的价格结算，但买家放弃交易的概率会明显提高。
-                  </div>`
-                : ""
-            }
+            <div class="listing-price-warning ${
+              priceAboveSuggested ? "" : "is-hidden"
+            }" data-price-warning>
+              <span data-price-warning-text>
+                当前售价高于建议上限，成交后仍按你设定的价格结算，但买家放弃交易的概率会明显提高。
+              </span>
+            </div>
           </div>
           <div class="listing-section">
             <strong>选择上架日期</strong>

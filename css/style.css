@@ -1540,7 +1540,8 @@ input:focus-visible {
 }
 
 .desktop-icon.is-guided,
-.dock-button.is-guided {
+.dock-button.is-guided,
+.legacy-button.is-guided {
   border-color: #fff29a;
   background: rgba(255, 244, 168, 0.24);
   animation: guidePulse 850ms steps(2, end) infinite;
@@ -2564,6 +2565,43 @@ button.keyword-chip {
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 10px;
+}
+
+.inventory-view-action {
+  position: relative;
+}
+
+.inventory-view-action.has-guide {
+  margin-bottom: 38px;
+}
+
+.inventory-view-tip {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 9px);
+  left: 0;
+  width: max-content;
+  max-width: 190px;
+  padding: 7px 9px;
+  border: 2px solid #000080;
+  background: #fff3a8;
+  box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.22);
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  animation: guidePulse 900ms steps(2, end) infinite;
+}
+
+.inventory-view-tip i {
+  position: absolute;
+  top: -9px;
+  left: 18px;
+  width: 0;
+  height: 0;
+  border-right: 7px solid transparent;
+  border-bottom: 9px solid #000080;
+  border-left: 7px solid transparent;
 }
 
 .listing-editor {
