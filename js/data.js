@@ -14,7 +14,7 @@ export const CONFIG = {
   firstPayment: 1800,
   paymentIntervalDays: 7,
   gameMinutesPerSecond: 2.5,
-  idleReminderSeconds: 20
+  idleReminderSeconds: 15
 };
 
 export const DESKTOP_APPS = [
@@ -151,6 +151,7 @@ export const STAGE_TWO_DATA = {
           category: "luxury",
           baseValue: 650,
           onsitePrice: 560,
+          source: "某位匿名收藏家赠送",
           description: "瓶身没有品牌，只贴着一枚手写标签。",
           keywords: ["私人调制", "封条完整"]
         }
@@ -206,6 +207,7 @@ export const STAGE_TWO_DATA = {
           category: "common",
           baseValue: 330,
           onsitePrice: 250,
+          source: "某位匿名收藏家赠送",
           description: "纸张很脆，角落写着一段无法辨认的编号。",
           keywords: ["石刻编号", "旧拓印"]
         },
@@ -248,6 +250,7 @@ export const STAGE_TWO_DATA = {
           category: "luxury",
           baseValue: 680,
           onsitePrice: 590,
+          source: "某位匿名收藏家赠送",
           effect: "成功售出后额外增加 1 点信誉",
           effectKey: "reputation_bonus",
           description: "壶底刻着一个被故意磨掉的姓氏。",
@@ -355,6 +358,28 @@ export const STAGE_TWO_DATA = {
       effectKey: "trouble_discount",
       description: "名片上的电话号码被重新写过一次。",
       keywords: ["律师姓名", "旧电话号码"]
+    }
+  ],
+  clueItemPool: [
+    {
+      id: "clue_locker_receipt",
+      name: "旧寄存柜收据",
+      category: "collection",
+      clue: true,
+      sellable: false,
+      clueStage: 1,
+      description: "纸边已经发脆，编号处残留着被水浸过的蓝色墨迹。",
+      keywords: ["K-12", "褪色印章"]
+    },
+    {
+      id: "clue_torn_ticket",
+      name: "缺角旧车票",
+      category: "collection",
+      clue: true,
+      sellable: false,
+      clueStage: 2,
+      description: "目的地一栏被撕掉了，背面写着一串很轻的日期。",
+      keywords: ["旧车站", "残缺日期"]
     }
   ],
   itemEffectPool: [
@@ -614,7 +639,8 @@ export const STAGE_TWO_DATA = {
       description: "可以自行填写商品名称和来源。",
       effect: "报价上限 +25%，曝光风险 22%",
       priceMultiplier: 1.25,
-      exposureChance: 0.22
+      exposureChance: 0.22,
+      forgeryType: "label"
     },
     {
       id: "fake_packaging",
@@ -624,7 +650,8 @@ export const STAGE_TWO_DATA = {
       description: "模仿正规包装，让商品看起来保存得更好。",
       effect: "报价上限 +35%，曝光风险 28%",
       priceMultiplier: 1.35,
-      exposureChance: 0.28
+      exposureChance: 0.28,
+      forgeryType: "packaging"
     },
     {
       id: "fake_material",
@@ -634,7 +661,8 @@ export const STAGE_TWO_DATA = {
       description: "替换明显缺失的零件，外观更难被察觉。",
       effect: "报价上限 +42%，曝光风险 36%",
       priceMultiplier: 1.42,
-      exposureChance: 0.36
+      exposureChance: 0.36,
+      forgeryType: "material"
     },
     {
       id: "fake_source",
@@ -644,9 +672,46 @@ export const STAGE_TWO_DATA = {
       description: "给普通物品补上一段看似完整的私人来源。",
       effect: "报价上限 +60%，曝光风险 44%",
       priceMultiplier: 1.6,
-      exposureChance: 0.44
+      exposureChance: 0.44,
+      forgeryType: "source"
     }
   ],
+  forgeryTargets: [
+    {
+      id: "collector",
+      name: "收藏型买家",
+      description: "更容易接受来源文件和旧标签，但对故事真实性敏感。",
+      buyerIds: ["paper_crane", "midnight_radio"],
+      compatibleTypes: ["source", "label"],
+      riskMultiplier: 1.08,
+      rewardMultiplier: 1.12
+    },
+    {
+      id: "quick_sale",
+      name: "低价快销",
+      description: "关注价格和速度，包装与替代材料更容易蒙混过去。",
+      buyerIds: ["old_fox", "blue_ledger"],
+      compatibleTypes: ["packaging", "material"],
+      riskMultiplier: 0.82,
+      rewardMultiplier: 1
+    },
+    {
+      id: "strict_reviewer",
+      name: "审核型买家",
+      description: "核验最严格，但一旦成交能接受更高的伪造溢价。",
+      buyerIds: ["seven_warehouse"],
+      compatibleTypes: ["source", "material"],
+      riskMultiplier: 1.35,
+      rewardMultiplier: 1.38
+    }
+  ],
+  contrabandConfig: {
+    depositRateRange: [0.4, 0.6],
+    riskWindowDays: [2, 3],
+    payoutMultipliers: [1, 0.82, 0.68, 0.55],
+    baseInvestigationChance: 0.12,
+    attentionChanceStep: 0.11
+  },
   visitorTemplates: [
     {
       id: "collector",
@@ -755,35 +820,127 @@ export const STAGE_TWO_DATA = {
     {
       id: "luxury_up",
       title: "奢侈品需求上涨",
+      label: "奢侈品升值",
       effect: "奢侈品在线成交价格提高 15%",
       detail: "收藏买家开始提高报价，但公开出售也可能引来调查。",
       category: "luxury",
-      multiplier: 1.15
+      multiplier: 1.15,
+      durationRange: [4, 7]
     },
     {
       id: "common_up",
       title: "普通旧货需求上升",
+      label: "普通旧货升",
       effect: "普通物品在线成交价格提高 12%",
       detail: "二手市场和维修店最近开始集中收购普通物品。",
       category: "common",
-      multiplier: 1.12
+      multiplier: 1.12,
+      durationRange: [4, 7]
     },
     {
       id: "junk_down",
       title: "垃圾处理费用上涨",
+      label: "垃圾处理贵",
       effect: "垃圾物品价格降低 20%",
       detail: "城市垃圾处理费用提高，普通买家拒绝接收低价值杂物。",
       category: "junk",
-      multiplier: 0.8
+      multiplier: 0.8,
+      durationRange: [4, 7]
     },
     {
       id: "strict_market",
       title: "平台开始集中审核",
+      label: "平台严审",
       effect: "未验证标签的买家信任降低",
       detail: "虚假描述和来源不明物品正在被平台重点检查。",
       category: "all",
-      multiplier: 1
+      multiplier: 1,
+      durationRange: [4, 7]
     }
+  ],
+  threatTemplates: [
+    {
+      id: "debt_collector",
+      title: "讨债人上门",
+      presentation: "message",
+      message: "一个没有报出姓名的人站在店门外，要求你立刻处理一笔私人欠款。",
+      escalation: "对方开始拍门，并声称下一次不会只提醒。",
+      target: "cash",
+      amountRange: [450, 850],
+      complyLabel: "支付现金",
+      resistLabel: "拒绝开门"
+    },
+    {
+      id: "cargo_grabber",
+      title: "抢货者堵门",
+      presentation: "alarm",
+      message: "两名陌生人堵在仓库入口，点名要拿走你库存里最值钱的东西。",
+      escalation: "对方开始搬动货架，库存可能被整批带走。",
+      target: "item",
+      amountRange: [0, 0],
+      complyLabel: "交出物品",
+      resistLabel: "强行阻拦"
+    },
+    {
+      id: "fake_buyer",
+      title: "冒充买家",
+      presentation: "chat",
+      message: "一个买家要求你立刻取消正在进行的挂单，否则会向平台举报虚假描述。",
+      escalation: "对方已经向平台提交了投诉预览，挂单随时可能被冻结。",
+      target: "listing",
+      amountRange: [300, 600],
+      complyLabel: "取消挂单",
+      resistLabel: "坚持交易"
+    },
+    {
+      id: "stalker",
+      title: "跟踪者",
+      presentation: "surveillance",
+      message: "监控画面里有人反复经过店铺，对方知道你今天收了多少钱。",
+      escalation: "对方发来一张店铺后门的照片。",
+      target: "cash",
+      amountRange: [350, 700],
+      complyLabel: "支付封口费",
+      resistLabel: "切断监控"
+    },
+    {
+      id: "black_hand",
+      title: "黑吃黑",
+      presentation: "glitch",
+      message: "一条加密消息要求你交出一件来源不明的物品，称它能让你免掉一次调查。",
+      escalation: "对方远程锁住了店铺的挂单页面。",
+      target: "item",
+      amountRange: [0, 0],
+      complyLabel: "交出物品",
+      resistLabel: "留下证据反制"
+    }
+  ],
+  endings: {
+    debt_free: {
+      type: "HE",
+      title: "无债一身轻",
+      subtitle: "全部贷款结清",
+      text:
+        "最后一张还款回执从打印机里滑出来。店铺还在，行李箱还会继续出现，但这一局你终于不再替债务工作。"
+    },
+    trouble_overload: {
+      type: "BE",
+      title: "麻烦吞没了店铺",
+      subtitle: "麻烦值达到上限",
+      text:
+        "调查、威胁和报复在同一天找上门。店铺被迫停业，你留下的只有一堆无法解释的交易记录。"
+    }
+  },
+  riskPhrases: [
+    "我保证",
+    "绝对真实",
+    "肯定没问题",
+    "不用检查",
+    "来源百分百可靠",
+    "百分百保证",
+    "我编一个",
+    "随便定的",
+    "拍照反光"
   ],
   buyerProfiles: [
     {
@@ -793,7 +950,18 @@ export const STAGE_TWO_DATA = {
       avatar: "crane",
       initialTrust: 58,
       style: "谨慎但讲道理",
-      opening: "我看到了你上架的物品，想先确认几个细节。"
+      voice: "礼貌完整",
+      preference: "来源、姓名、故事",
+      verificationFocus: ["source", "name", "proof"],
+      verificationRate: 0.22,
+      deceptionReward: 3,
+      questionLead: "请问，",
+      questionSuffix: "",
+      opening: "我看到了你上架的物品，想先确认几个细节。",
+      resultFeedback: {
+        accepted: "资料和故事能对上，我愿意收下。",
+        rejected: "抱歉，关键信息对不上，我只能取消。"
+      }
     },
     {
       id: "blue_ledger",
@@ -802,7 +970,18 @@ export const STAGE_TWO_DATA = {
       avatar: "ledger",
       initialTrust: 52,
       style: "精明，喜欢压价",
-      opening: "报价我看到了，不过还有几件事需要你说明。"
+      voice: "短句数字导向",
+      preference: "价格、利润、手续费",
+      verificationFocus: ["price", "record"],
+      verificationRate: 0.12,
+      deceptionReward: 2,
+      questionLead: "",
+      questionSuffix: "",
+      opening: "报价我看到了，不过还有几件事需要你说明。",
+      resultFeedback: {
+        accepted: "数字没问题，成交。",
+        rejected: "账算不平，交易取消。"
+      }
     },
     {
       id: "old_fox",
@@ -811,7 +990,18 @@ export const STAGE_TWO_DATA = {
       avatar: "fox",
       initialTrust: 62,
       style: "爽快，讨厌废话",
-      opening: "东西看着还行，回答清楚我就下单。"
+      voice: "口语直接",
+      preference: "快速成交、低价",
+      verificationFocus: ["urgency", "packaging", "price"],
+      verificationRate: 0.1,
+      deceptionReward: 4,
+      questionLead: "",
+      questionSuffix: " 直接说。",
+      opening: "东西看着还行，回答清楚我就下单。",
+      resultFeedback: {
+        accepted: "成，痛快。",
+        rejected: "不痛快，我不要了。"
+      }
     },
     {
       id: "seven_warehouse",
@@ -820,7 +1010,18 @@ export const STAGE_TWO_DATA = {
       avatar: "seven",
       initialTrust: 45,
       style: "神秘，问题很多",
-      opening: "我对这件物品有兴趣，但来源和记录要核对。"
+      voice: "冷静技术化",
+      preference: "编号、批次、严格核验",
+      verificationFocus: ["code", "record", "proof", "packaging"],
+      verificationRate: 0.32,
+      deceptionReward: 2,
+      questionLead: "核验项：",
+      questionSuffix: " 请给出可查证信息。",
+      opening: "我对这件物品有兴趣，但来源和记录要核对。",
+      resultFeedback: {
+        accepted: "核验结束，批准交易。",
+        rejected: "核验失败，交易中止。"
+      }
     },
     {
       id: "velvet_broker",
@@ -829,7 +1030,18 @@ export const STAGE_TWO_DATA = {
       avatar: "velvet",
       initialTrust: 55,
       style: "价格导向，讨厌含糊回答",
-      opening: "价格可以谈，前提是物品信息足够准确。"
+      voice: "商业客套",
+      preference: "压价、批量交易",
+      verificationFocus: ["price", "source", "feature"],
+      verificationRate: 0.18,
+      deceptionReward: 3,
+      questionLead: "在继续之前，",
+      questionSuffix: "",
+      opening: "价格可以谈，前提是物品信息足够准确。",
+      resultFeedback: {
+        accepted: "这笔可以入账。",
+        rejected: "口径不一致，无法继续。"
+      }
     },
     {
       id: "midnight_radio",
@@ -838,7 +1050,18 @@ export const STAGE_TWO_DATA = {
       avatar: "radio",
       initialTrust: 60,
       style: "喜欢物品故事，也容易怀疑来源",
-      opening: "我想听听这件东西的来历，最好是能查证的部分。"
+      voice: "叙述化情绪强",
+      preference: "旧物故事、来源真实性",
+      verificationFocus: ["source", "story", "name"],
+      verificationRate: 0.24,
+      deceptionReward: 3,
+      questionLead: "我想先听听你的说法。",
+      questionSuffix: " 最好是能查证的部分。",
+      opening: "我想听听这件东西的来历，最好是能查证的部分。",
+      resultFeedback: {
+        accepted: "故事有出处，成交。",
+        rejected: "叙述里缺了关键证据，这次到此为止。"
+      }
     }
   ],
   buyerQuestionTemplates: {
@@ -918,7 +1141,7 @@ export const STAGE_TWO_DATA = {
       replies: [
         { id: "cash", text: "我需要现金，但物品来源没有问题。", trust: 15 },
         { id: "cleanup", text: "这是别人留下的东西，我只是清理库存。", trust: 5 },
-        { id: "rush", text: "别问这么多，买不买？", trust: -25 }
+        { id: "rush", text: "别问这么多，买不买？", trust: -25, risk: "vague" }
       ]
     },
     {
@@ -927,7 +1150,7 @@ export const STAGE_TWO_DATA = {
       replies: [
         { id: "checked", text: "检查过，不影响主要功能。", trust: 20 },
         { id: "new", text: "我拿到时就是这样。", trust: 5 },
-        { id: "hide", text: "那只是拍照反光。", trust: -20 }
+        { id: "hide", text: "那只是拍照反光。", trust: -20, risk: "deceptive" }
       ]
     },
     {
@@ -936,8 +1159,13 @@ export const STAGE_TWO_DATA = {
       text: "你知道上一任主人是谁吗？",
       replies: [
         { id: "unknown", text: "不知道，只知道箱子来源。", trust: 10 },
-        { id: "guess", text: "我猜是收藏家。", trust: -5 },
-        { id: "refuse", text: "这和交易没有关系。", trust: -15 }
+        { id: "guess", text: "我猜是收藏家。", trust: -5, risk: "vague" },
+        {
+          id: "refuse",
+          text: "这和交易没有关系。",
+          trust: -15,
+          risk: "vague"
+        }
       ]
     },
     {
@@ -946,7 +1174,12 @@ export const STAGE_TWO_DATA = {
       text: "你能保证它不是仿制品吗？",
       replies: [
         { id: "evidence", text: "我可以提供搜索到的依据。", trust: 25 },
-        { id: "promise", text: "我保证是真的。", trust: -5 },
+        {
+          id: "promise",
+          text: "我保证是真的。",
+          trust: -5,
+          risk: "deceptive"
+        },
         { id: "uncertain", text: "不能百分百保证，但风险我会说明。", trust: 10 }
       ]
     },
@@ -996,7 +1229,12 @@ export const STAGE_TWO_DATA = {
       replies: [
         { id: "real", text: "有一份旧资料能说明它的来历。", trust: 15 },
         { id: "simple", text: "没有故事，就是普通失物。", trust: 5 },
-        { id: "fake", text: "我编一个你爱听的故事。", trust: -20 }
+        {
+          id: "fake",
+          text: "我编一个你爱听的故事。",
+          trust: -20,
+          risk: "deceptive"
+        }
       ]
     },
     {
@@ -1006,7 +1244,12 @@ export const STAGE_TWO_DATA = {
       replies: [
         { id: "details", text: "因为来源和状态都更清楚。", trust: 18 },
         { id: "market", text: "我参考了近期市场报价。", trust: 20 },
-        { id: "random", text: "价格是我随便定的。", trust: -20 }
+        {
+          id: "random",
+          text: "价格是我随便定的。",
+          trust: -20,
+          risk: "deceptive"
+        }
       ]
     }
   ]

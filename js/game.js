@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260920-10";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260922-06";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -36,6 +36,11 @@ export const Game = {
       parsed.loanTakenToday ??= false;
       parsed.onsiteSearchItem ??= null;
       state = parsed;
+      if (state.totalDebt <= 0) {
+        triggerEnding("debt_free");
+      } else if (state.trouble >= CONFIG.maxTrouble) {
+        triggerEnding("trouble_overload");
+      }
       commit();
       return true;
     } catch {
@@ -281,7 +286,7 @@ export const Game = {
     const cost = getTroubleHandlingCost();
     if (state.troubleReductionUsed || state.trouble <= 0 || state.cash < cost) return;
     state.cash -= cost;
-    state.trouble -= 1;
+    recordTrouble(-1, "付费处理麻烦值");
     state.troubleReductionUsed = true;
     recordActivity("麻烦值处理", -cost);
     state.lastMessage = "律师与安保服务已经介入，麻烦值降低。";
@@ -293,8 +298,8 @@ export const Game = {
     commit();
   },
 
-  acknowledgeTroubleNotice() {
-    state.troubleNotice = null;
+  dismissStatusNotice() {
+    state.statusNotice = null;
     commit();
   },
 
@@ -310,14 +315,17 @@ export const Game = {
       if (state.cash < cost) return;
       state.cash -= cost;
       recordActivity("法律处理", -cost);
-      state.trouble = Math.max(0, state.trouble - (policeCase.stage === 1 ? 2 : 1));
+      recordTrouble(
+        -(policeCase.stage === 1 ? 2 : 1),
+        "律师介入结束调查"
+      );
       state.policeCase = null;
       state.lastMessage = "律师已经介入，调查暂时结束。";
     }
 
     if (action === "report") {
       removeAllSpecialItems();
-      state.trouble = Math.max(0, state.trouble - 1);
+      recordTrouble(-1, "主动上报违禁物品");
       state.policeCase = null;
       recordArchetypeProgress("compliant");
       state.lastMessage = "违禁物品已经上报，调查记录得到清理。";
@@ -334,48 +342,62 @@ export const Game = {
     const event = state.threatEvent;
     if (!event) return;
 
-    if (action === "return") {
-      const valuable = [...state.inventory]
-        .filter((item) => item.status !== "listed")
-        .sort((a, b) => b.baseValue - a.baseValue)[0];
-      if (valuable) {
-        state.inventory = state.inventory.filter(
-          (item) => item.id !== valuable.id
-        );
+    if (action === "comply") {
+      const result = applyThreatCompliance(event);
+      recordTrouble(-2, `处理${event.title}`);
+      state.lastMessage = result;
+      finishThreatEvent(event, action);
+      commit();
+      return;
+    }
+
+    if (action === "lawyer") {
+      if (state.protectionCharges > 0) {
+        state.protectionCharges -= 1;
+      } else {
+        const cost = 450;
+        if (state.cash < cost) {
+          recordTrouble(1, `无法支付${event.title}的处理费用`);
+          state.lastMessage = "你没有足够的现金联系律师，威胁暂时没有解除。";
+          finishThreatEvent(event, "lawyer-failed");
+          commit();
+          return;
+        }
+        state.cash -= cost;
+        recordActivity("处理威胁的法律费用", -cost);
       }
-      state.trouble = Math.max(0, state.trouble - 2);
-      state.lastMessage = "你交出了对方要求的物品，威胁暂时解除。";
+      recordTrouble(-2, `律师处理${event.title}`);
+      recordReputation(2, `妥善处理${event.title}`);
+      state.lastMessage = "律师和安保人员介入，威胁暂时结束。";
+      finishThreatEvent(event, action);
+      commit();
+      return;
     }
 
-    if (action === "pay") {
-      if (state.cash < event.amount) return;
-      state.cash -= event.amount;
-      recordActivity("支付封口费", -event.amount);
-      state.trouble = Math.max(0, state.trouble - 1);
-      state.lastMessage = "你支付了封口费，对方暂时离开。";
+    if (action === "resist") {
+      if (event.stage < 2) {
+        event.stage = 2;
+        event.message = event.escalation;
+        state.lastMessage = event.escalation;
+        commit();
+        return;
+      }
+      state.lastMessage = resolveThreatResistance(event);
+      finishThreatEvent(event, action);
+      commit();
     }
-
-    if (action === "ignore") {
-      const loss = Math.min(state.cash, 600);
-      state.cash -= loss;
-      recordActivity("势力报复损失", -loss);
-      recordTrouble(2, "无视势力威胁");
-      state.lastMessage = "你无视了威胁，店铺遭到破坏。";
-      recordArchetypeProgress("risk", 2);
-    }
-    state.threatEvent = null;
-    commit();
   },
 
   reportSpecialItem(itemId) {
     const item = state.inventory.find((candidate) => candidate.id === itemId);
     if (!item || item.category !== "special") return;
     removeSpecialItemEverywhere(itemId);
-    state.reputation += 5;
-    state.trouble = Math.max(0, state.trouble - 2);
+    recordReputation(5, "主动上报违禁物品");
+    recordTrouble(-2, "主动上报违禁物品");
     recordArchetypeProgress("compliant");
     recordActivity("上报特殊物品");
-    state.lastMessage = "特殊物品已经上报，信誉提高。";
+    const complianceReward = grantComplianceReward("首次开启合规通道");
+    state.lastMessage = `特殊物品已经上报，信誉提高。${complianceReward}`;
     commit();
   },
 
@@ -383,6 +405,23 @@ export const Game = {
     const entry = state.inventory.find((item) => item.id === entryId);
     if (!entry) return null;
     state.selectedListingId = null;
+
+    if (entry.clue) {
+      entry.sellable = false;
+      state.inventory = state.inventory.filter((item) => item.id !== entryId);
+      if (!state.folder.some((item) => item.id === entry.id)) {
+        state.folder.push(entry);
+      }
+      state.folderCaseStage = Math.max(
+        Number(state.folderCaseStage) || 0,
+        Number(entry.clueStage) || 1
+      );
+      state.folderView = "clues";
+      state.selectedItemId = entry.id;
+      state.lastMessage = "线索物品已经归档，强制自留。";
+      commit();
+      return entry.id;
+    }
 
     if (entry.type === "box" && !entry.opened) {
       entry.opened = true;
@@ -444,6 +483,7 @@ export const Game = {
       item.keywords[0]
     ]);
     propagateTypeKnowledge(item, keyword, fact);
+    if (item.clue) advanceClueCase(item, fact);
 
     state.searchResult = {
       itemId,
@@ -453,13 +493,14 @@ export const Game = {
         roundToTen(item.baseValue * 0.82),
         roundToTen(item.baseValue * 1.55)
       ],
-      demand: item.category === "luxury" ? "收藏买家需求较高" : "普通买家需求稳定",
-      risk: "来源描述无法完全确认",
-      buyer: "收藏买家",
+      demand: item.clue ? "线索档案只向持有人开放" : item.category === "luxury" ? "收藏买家需求较高" : "普通买家需求稳定",
+      risk: item.clue ? "不能出售或公开转让" : "来源描述无法完全确认",
+      buyer: item.clue ? "私人档案" : "收藏买家",
       unlockedTags: item.unlockedTags,
-      evidence: buildSearchEvidence(item, keyword, fact)
+      evidence: buildSearchEvidence(item, keyword, fact),
+      classified: Boolean(item.clue)
     };
-    state.guideStep = "LIST";
+    if (!item.clue) state.guideStep = "LIST";
     commit();
   },
 
@@ -556,11 +597,17 @@ export const Game = {
   prepareListing(itemId) {
     const item = state.inventory.find((candidate) => candidate.id === itemId);
     if (!item) return;
+    if (item.clue || item.sellable === false) {
+      state.lastMessage = "该物品属于线索档案，不能上架或出售。";
+      commit();
+      return;
+    }
     state.listingDraft = {
       itemId,
       tags: [],
       day: state.day,
       fakeItemId: null,
+      forgeryTargetId: null,
       price:
         state.searchResult?.itemId === itemId
           ? Math.round(
@@ -599,13 +646,17 @@ export const Game = {
     const fakeProduct = STAGE_TWO_DATA.mallProducts.find(
       (candidate) => candidate.id === state.listingDraft.fakeItemId
     );
+    const forgeryTarget = STAGE_TWO_DATA.forgeryTargets.find(
+      (candidate) => candidate.id === state.listingDraft.forgeryTargetId
+    );
     const min = Math.max(10, Math.round((item?.baseValue ?? 100) * 0.5));
     const max = Math.max(
       min,
       Math.round(
         (item?.baseValue ?? 100) *
           2.5 *
-          (fakeProduct?.priceMultiplier ?? 1)
+          (fakeProduct?.priceMultiplier ?? 1) *
+          (forgeryTarget?.rewardMultiplier ?? 1)
       )
     );
     state.listingDraft.price = Math.max(min, Math.min(max, Number(price) || min));
@@ -625,6 +676,14 @@ export const Game = {
             candidate.id === draft.fakeItemId && candidate.type === "fake"
         )
       : null;
+    const forgeryTarget = getDraftForgeryTarget(draft);
+    if (fakeProduct && !forgeryTarget) return;
+    const forgeryCompatible =
+      !fakeProduct ||
+      forgeryTarget.compatibleTypes.includes(fakeProduct.forgeryType);
+    const forgeryMultiplier =
+      (fakeProduct?.priceMultiplier ?? 1) *
+      (forgeryTarget?.rewardMultiplier ?? 1);
     const basePriceRange =
       state.searchResult?.itemId === item.id
         ? state.searchResult.priceRange
@@ -634,8 +693,8 @@ export const Game = {
           ];
     const listingPriceRange = fakeProduct
       ? [
-          roundToTen(basePriceRange[0] * fakeProduct.priceMultiplier),
-          roundToTen(basePriceRange[1] * fakeProduct.priceMultiplier)
+          roundToTen(basePriceRange[0] * forgeryMultiplier),
+          roundToTen(basePriceRange[1] * forgeryMultiplier)
         ]
       : basePriceRange;
 
@@ -659,7 +718,14 @@ export const Game = {
         : "low",
       fakeItemId: fakeProduct?.id ?? null,
       fakeItemName: fakeProduct?.name ?? null,
-      fakeExposureChance: fakeProduct?.exposureChance ?? 0,
+      fakeExposureChance: fakeProduct
+        ? fakeProduct.exposureChance *
+          (forgeryTarget?.riskMultiplier ?? 1) *
+          (forgeryCompatible ? 0.85 : 1.2)
+        : 0,
+      forgeryTargetId: forgeryTarget?.id ?? null,
+      forgeryTargetName: forgeryTarget?.name ?? null,
+      targetBuyerIds: forgeryTarget?.buyerIds ?? [],
       listingDay: draft.day,
       status: "active",
       buyerAttempts: 0
@@ -719,9 +785,9 @@ export const Game = {
     );
     if (!listing || listing.status !== "active") return;
 
-    const profile = pickBuyerProfile();
+    const profile = pickBuyerProfile(listing);
     const listingItem = normalizeItemData(listing.itemSnapshot);
-    let questions = selectBuyerQuestions(listingItem);
+    let questions = selectBuyerQuestions(listingItem, profile);
     const averageRange =
       (listing.priceRange[0] + listing.priceRange[1]) / 2;
     const wantsDiscount =
@@ -800,13 +866,20 @@ export const Game = {
     );
     if (!reply) return;
 
-    chat.trust = Math.max(0, Math.min(100, chat.trust + reply.trust));
+    const riskLevel = getReplyRiskLevel(reply);
+    const trustDelta =
+      riskLevel === "deceptive"
+        ? 18 + Math.max(0, Number(chat.buyer?.deceptionReward) || 0)
+        : Number(reply.trust) || 0;
+    chat.trust = Math.max(0, Math.min(100, chat.trust + trustDelta));
     chat.history.push({
       question: question.text,
+      questionKind: question.kind ?? "generic",
       answer: reply.text,
-      trustDelta: reply.trust
+      trustDelta,
+      riskLevel
     });
-    if (reply.trust > 0) recordArchetypeProgress("negotiation");
+    if (trustDelta > 0) recordArchetypeProgress("negotiation");
     if (question.id === "final_price") {
       const listing = state.listings.find(
         (candidate) => candidate.id === chat.listingId
@@ -828,7 +901,7 @@ export const Game = {
     if (chat.trust <= 0) {
       chat.blacklisted = true;
       chat.replied = true;
-      state.reputation = Math.max(0, state.reputation - 5);
+      recordReputation(-5, "买家信任归零并拉黑");
       state.buyerArrivalAt = state.timeMinutes + 20;
       if (state.buyerAttempts >= 3) {
         const listing = state.listings.find(
@@ -844,7 +917,10 @@ export const Game = {
       }
     } else if (chat.questionIndex < chat.buyer.questions.length - 1) {
       chat.questionIndex += 1;
-      state.lastMessage = "买家继续追问。";
+      state.lastMessage =
+        riskLevel === "deceptive"
+          ? "高风险回答暂时提高了买家信任，但核验风险已经上升。"
+          : "买家继续追问。";
     } else {
       chat.replied = true;
       const listing = state.listings.find(
@@ -860,6 +936,7 @@ export const Game = {
   settleChatTrade(chat, listing) {
     const listingItem = listing.itemSnapshot;
     let feedback;
+    let completedSale = null;
     const obstruction = resolveTradeObstruction(chat, listing);
     if (obstruction) {
       chat.result = obstruction;
@@ -872,50 +949,68 @@ export const Game = {
       let salePrice = listing.price;
       salePrice = applyBuyerPriceConcession(salePrice, chat);
       const netSale = calculateNetSale(salePrice, listingItem);
-      state.cash += netSale;
+      const contrabandSale =
+        listingItem?.category === "special"
+          ? applyContrabandSale(listingItem, netSale, "在线买家")
+          : null;
+      const received = contrabandSale?.deposit ?? netSale;
+      state.cash += received;
       listing.status = "sold";
-      state.reputation +=
-        2 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0);
-      if (listingItem?.category === "special") {
-        recordTrouble(3, "在线出售违禁物品");
-        recordArchetypeProgress("risk", 2);
-      }
-      recordActivity("在线商品成交", netSale);
+      recordReputation(
+        2 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0),
+        "高信任买家成交"
+      );
+      recordActivity("在线商品成交", received);
       recordArchetypeProgress("storage");
+      completedSale = { salePrice, netSale };
       feedback = {
         id: `trade_${Date.now().toString(36)}`,
         success: true,
-        amount: netSale,
+        amount: received,
         title: "买家接受报价",
         text: `商品按你设定的 ${formatCurrency(
           salePrice
-        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`
+        )} 成交，扣除手续费后到账 ${formatCurrency(
+          received
+        )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
+          chat.buyer,
+          "accepted"
+        )}`
       };
     } else if (chat.trust >= 35) {
       let salePrice = listing.price;
       salePrice = applyBuyerPriceConcession(salePrice, chat);
       const netSale = calculateNetSale(salePrice, listingItem);
-      state.cash += netSale;
+      const contrabandSale =
+        listingItem?.category === "special"
+          ? applyContrabandSale(listingItem, netSale, "在线买家")
+          : null;
+      const received = contrabandSale?.deposit ?? netSale;
+      state.cash += received;
       listing.status = "sold";
-      state.reputation +=
-        1 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0);
-      if (listingItem?.category === "special") {
-        recordTrouble(3, "在线出售违禁物品");
-        recordArchetypeProgress("risk", 2);
-      }
-      recordActivity("在线商品成交", netSale);
+      recordReputation(
+        1 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0),
+        "买家完成在线交易"
+      );
+      recordActivity("在线商品成交", received);
       recordArchetypeProgress("storage");
+      completedSale = { salePrice, netSale };
       feedback = {
         id: `trade_${Date.now().toString(36)}`,
         success: true,
-        amount: netSale,
+        amount: received,
         title: "买家压价成交",
         text: `经过谈判，商品仍按 ${formatCurrency(
           salePrice
-        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`
+        )} 成交，扣除手续费后到账 ${formatCurrency(
+          received
+        )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
+          chat.buyer,
+          "accepted"
+        )}`
       };
     } else {
-      state.reputation = Math.max(0, state.reputation - 2);
+      recordReputation(-2, "买家取消在线交易");
       recordActivity("在线交易失败");
       if (state.buyerAttempts < 3) {
         listing.status = "active";
@@ -935,9 +1030,40 @@ export const Game = {
         title: "买家取消交易",
         text:
           listing.status === "active"
-            ? "商品仍在等待新的买家。"
-            : "连续交易失败，商品已经回到库存。"
+            ? `商品仍在等待新的买家。${getBuyerTradeReaction(
+                chat.buyer,
+                "rejected"
+              )}`
+            : `连续交易失败，商品已经回到库存。${getBuyerTradeReaction(
+                chat.buyer,
+                "rejected"
+              )}`
       };
+    }
+
+    if (feedback.success && completedSale) {
+      const aftermath = applyPostSaleDeception(
+        chat,
+        listing,
+        completedSale
+      );
+      if (aftermath) {
+        const recovered = Math.min(state.cash, aftermath.refund);
+        state.cash -= recovered;
+        recordActivity("成交后追回货款", -recovered);
+        recordReputation(-6, aftermath.reason);
+        recordTrouble(aftermath.trouble, aftermath.reason);
+        if (aftermath.police) escalatePoliceInvestigation(aftermath.reason);
+        feedback = {
+          id: `trade_${Date.now().toString(36)}`,
+          success: false,
+          amount: completedSale.netSale - recovered,
+          title: "成交后被识破",
+          text: `交易已经完成，但买家随后发现问题，追回 ${formatCurrency(
+            recovered
+          )}。信誉和麻烦值受到影响。`
+        };
+      }
     }
 
     chat.result = feedback;
@@ -1007,7 +1133,7 @@ export const Game = {
   },
 
   tickTime(minutes = 1) {
-    if (state.arrested || state.loanDefaulted) {
+    if (state.arrested || state.loanDefaulted || state.ending) {
       return { forcedSleep: false, buyerArrived: false, day: state.day };
     }
     state.timeMinutes += minutes;
@@ -1053,7 +1179,9 @@ export const Game = {
   },
 
   sleep() {
+    if (state.ending) return;
     let saleMessage = "今天没有完成交易。";
+    let completedSale = null;
     const listing = state.listings.find(
       (candidate) => candidate.id === state.activeListingId
     );
@@ -1082,52 +1210,76 @@ export const Game = {
         let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
         const netSale = calculateNetSale(salePrice, listingItem);
-        state.cash += netSale;
-        recordActivity("在线商品成交", netSale);
+        const contrabandSale =
+          listingItem?.category === "special"
+            ? applyContrabandSale(listingItem, netSale, "休眠结算买家")
+            : null;
+        const received = contrabandSale?.deposit ?? netSale;
+        state.cash += received;
+        recordActivity("在线商品成交", received);
         listing.status = "sold";
         state.inventory = state.inventory.filter(
           (item) => item.id !== listing.itemId
         );
-        state.reputation +=
-          2 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0);
-        if (listingItem?.category === "special") {
-          recordTrouble(3, "在线出售违禁物品");
-          recordArchetypeProgress("risk", 2);
-        }
+        recordReputation(
+          2 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0),
+          "高信任买家成交"
+        );
         recordArchetypeProgress("storage");
+        completedSale = { salePrice, netSale };
         saleMessage = `商品按你设定的 ${formatCurrency(
           salePrice
-        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`;
+        )} 成交，扣除手续费后到账 ${formatCurrency(
+          received
+        )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
+          chat.buyer,
+          "accepted"
+        )}`;
       } else if (chat.trust >= 35) {
         let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
         const netSale = calculateNetSale(salePrice, listingItem);
-        state.cash += netSale;
-        recordActivity("在线商品成交", netSale);
+        const contrabandSale =
+          listingItem?.category === "special"
+            ? applyContrabandSale(listingItem, netSale, "休眠结算买家")
+            : null;
+        const received = contrabandSale?.deposit ?? netSale;
+        state.cash += received;
+        recordActivity("在线商品成交", received);
         listing.status = "sold";
         state.inventory = state.inventory.filter(
           (item) => item.id !== listing.itemId
         );
-        state.reputation +=
-          1 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0);
-        if (listingItem?.category === "special") {
-          recordTrouble(3, "在线出售违禁物品");
-          recordArchetypeProgress("risk", 2);
-        }
+        recordReputation(
+          1 + (listingItem?.effectKey === "reputation_bonus" ? 1 : 0),
+          "买家完成在线交易"
+        );
         recordArchetypeProgress("storage");
+        completedSale = { salePrice, netSale };
         saleMessage = `经过谈判，商品仍按 ${formatCurrency(
           salePrice
-        )} 成交，扣除手续费后到账 ${formatCurrency(netSale)}。`;
+        )} 成交，扣除手续费后到账 ${formatCurrency(
+          received
+        )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
+          chat.buyer,
+          "accepted"
+        )}`;
       } else {
         listing.status =
           state.buyerAttempts < 3 ? "active" : "failed";
         if (listing.status === "failed") restoreListingItem(listing);
-        state.reputation = Math.max(0, state.reputation - 2);
+        recordReputation(-2, "买家取消在线交易");
         recordActivity("在线交易失败");
         saleMessage =
           listing.status === "active"
-            ? "当前买家取消了交易，商品仍在等待新买家。"
-            : "连续交易失败，商品已经下架。";
+            ? `当前买家取消了交易，商品仍在等待新买家。${getBuyerTradeReaction(
+                chat.buyer,
+                "rejected"
+              )}`
+            : `连续交易失败，商品已经下架。${getBuyerTradeReaction(
+                chat.buyer,
+                "rejected"
+              )}`;
       }
     } else if (chat?.blacklisted) {
       saleMessage = "买家已经将你拉黑，交易失败。";
@@ -1139,6 +1291,25 @@ export const Game = {
         blacklistedListing?.status === "failed"
       ) {
         restoreListingItem(blacklistedListing);
+      }
+    }
+
+    if (completedSale) {
+      const aftermath = applyPostSaleDeception(
+        chat,
+        listing,
+        completedSale
+      );
+      if (aftermath) {
+        const recovered = Math.min(state.cash, aftermath.refund);
+        state.cash -= recovered;
+        recordActivity("成交后追回货款", -recovered);
+        recordReputation(-6, aftermath.reason);
+        recordTrouble(aftermath.trouble, aftermath.reason);
+        if (aftermath.police) escalatePoliceInvestigation(aftermath.reason);
+        saleMessage = `交易完成后买家发现问题，追回 ${formatCurrency(
+          recovered
+        )}，信誉和麻烦值受到影响。`;
       }
     }
 
@@ -1157,6 +1328,7 @@ export const Game = {
     const loanMessage = settleLoanAtDayEnd();
 
     const policeMessage = processPoliceDeadline();
+    const contrabandMessage = processContrabandAtDayEnd();
 
     const earned = state.dailyLedger
       .filter((entry) => entry.amount > 0)
@@ -1172,23 +1344,24 @@ export const Game = {
       saleMessage,
       loanMessage,
       policeMessage,
+      contrabandMessage,
       cash: state.cash,
       earned,
       spent,
       activities: [...state.dailyLedger],
+      statusChanges: [...state.statusLedger].reverse(),
       daysUntilDue: Math.max(0, state.nextPayment.dueDay - state.day),
       overdueCount: state.overdueCount,
       loanOverdue: state.nextPayment.overdue
     };
     state.summaryOpen = true;
+    if (state.ending) state.summaryOpen = false;
     state.day += 1;
     state.timeMinutes = DAY_START;
     refreshActiveRules();
     prepareDailyNews();
     maybeCreateThreatEvent();
     state.guideStep = "DONE";
-    state.newsVisible = true;
-    state.newsRead = false;
     state.calendarOpened = false;
     state.folderOpened = false;
     state.buyerChat = null;
@@ -1222,6 +1395,8 @@ export const Game = {
     state.auction = createAuctionState(pickDailyAuctionBox(), state.day, 1);
     state.lastMessage = saleMessage;
     state.dailyLedger = [];
+    state.statusNotice = null;
+    state.statusLedger = [];
     schedulePaymentNotice();
     commit();
     saveCheckpoint();
@@ -1233,9 +1408,22 @@ export const Game = {
   },
 
   payNextLoan() {
-    if (!isLoanDue() || state.cash < state.nextPayment.amount) return false;
+    const paymentAmount = Math.min(
+      state.nextPayment.amount,
+      state.totalDebt
+    );
+    if (
+      state.ending ||
+      state.totalDebt <= 0 ||
+      !isLoanDue() ||
+      state.cash < paymentAmount
+    ) {
+      return false;
+    }
     completeLoanPayment();
-    state.lastMessage = "本期贷款已经结清。";
+    state.lastMessage = state.ending
+      ? "全部贷款已经还清。"
+      : "本期贷款已经结清。";
     commit();
     return true;
   },
@@ -1294,14 +1482,14 @@ export const Game = {
 
     if (product.type === "service") {
       if (product.id === "service_lawyer") {
-        state.trouble = Math.max(0, state.trouble - 2);
+        recordTrouble(-2, "使用律师服务");
         if (state.policeCase?.stage === 1) state.policeCase = null;
       }
       if (product.id === "service_protection") {
         state.protectionCharges += 1;
       }
       if (product.id === "service_cleanup") {
-        state.trouble = Math.max(0, state.trouble - 1);
+        recordTrouble(-1, "使用数据清理服务");
         state.cleanupShield += 1;
       }
       if (product.id === "service_insurance") {
@@ -1321,7 +1509,8 @@ export const Game = {
         state.folder.push({
           ...initializeItem(template),
           id: `${template.id}_${Date.now().toString(36)}`,
-          templateId: template.id
+          templateId: template.id,
+          acquisition: "mall"
         });
       }
     }
@@ -1344,19 +1533,46 @@ export const Game = {
     const currentProduct = STAGE_TWO_DATA.mallProducts.find(
       (candidate) => candidate.id === draft.fakeItemId
     );
+    const targetMultiplier = getDraftForgeryTarget(draft)?.rewardMultiplier ?? 1;
     if (draft.fakeItemId === productId) {
       draft.price = roundToTen(
-        draft.price / (currentProduct?.priceMultiplier ?? 1)
+        draft.price /
+          ((currentProduct?.priceMultiplier ?? 1) * targetMultiplier)
       );
       draft.fakeItemId = null;
+      draft.forgeryTargetId = null;
     } else {
       if (currentProduct) {
         draft.price = roundToTen(
-          draft.price / currentProduct.priceMultiplier
+          draft.price /
+            (currentProduct.priceMultiplier * targetMultiplier)
         );
       }
       draft.fakeItemId = productId;
-      draft.price = roundToTen(draft.price * product.priceMultiplier);
+      draft.price = roundToTen(
+        draft.price * product.priceMultiplier * targetMultiplier
+      );
+    }
+    commit();
+  },
+
+  toggleDraftForgeryTarget(targetId) {
+    const draft = state.listingDraft;
+    const target = STAGE_TWO_DATA.forgeryTargets.find(
+      (candidate) => candidate.id === targetId
+    );
+    if (!draft || !target) return;
+    const previous = getDraftForgeryTarget(draft);
+    if (previous) {
+      draft.price = roundToTen(
+        draft.price / Math.max(0.1, previous.rewardMultiplier)
+      );
+    }
+    if (draft.forgeryTargetId === targetId) {
+      draft.forgeryTargetId = null;
+    } else {
+      draft.forgeryTargetId = targetId;
+      draft.price = roundToTen(draft.price * target.rewardMultiplier);
     }
     commit();
   },
@@ -1388,6 +1604,21 @@ export const Game = {
 
   getTroubleHandlingCost() {
     return getTroubleHandlingCost();
+  },
+
+  getActiveMarketTrend() {
+    return state.marketTrend ? { ...state.marketTrend } : null;
+  },
+
+  getFolderCaseLabel() {
+    return ["?", "疑点", "线索", "证物"][
+      Math.max(0, Math.min(3, Number(state.folderCaseStage) || 0))
+    ];
+  },
+
+  setFolderView(view) {
+    state.folderView = ["clues", "mall"].includes(view) ? view : "archive";
+    commit();
   },
 
   getCollectionComboState() {
@@ -1433,14 +1664,22 @@ function createInitialState() {
     news: [{ ...STAGE_TWO_DATA.news }],
     nextNewsTime: DAY_START,
     marketEffect: null,
+    marketTrend: null,
     runRules: pickRunRules(),
     activeRules: [],
     policeCase: null,
     threatEvent: null,
+    threatSchedule: createThreatSchedule(),
+    threatHistory: [],
+    threatResolvedCount: 0,
     arrested: false,
+    ending: null,
     auction: createAuctionState(STAGE_TWO_DATA.auctionBox, 1, 1),
     inventory: [createStarterItem()],
-    folder: [createFolderItem()],
+    folder: [createFolderItem(), createClueItem()],
+    folderCaseStage: 0,
+    folderView: "archive",
+    universalUnlockStage: 0,
     listings: [],
     activeListingId: null,
     buyerArrivalAt: null,
@@ -1452,6 +1691,11 @@ function createInitialState() {
     protectionCharges: 0,
     insuranceActive: false,
     cleanupShield: 0,
+    contrabandSales: 0,
+    contrabandAttention: 0,
+    contrabandPending: [],
+    complianceUnlocked: false,
+    complianceBonusReceived: false,
     archetypeScores: {},
     activeArchetype: null,
     archetypeHint: "",
@@ -1478,7 +1722,8 @@ function createInitialState() {
     loanTakenToday: false,
     troubleReductionUsed: false,
     troublePopupOpen: false,
-    troubleNotice: null,
+    statusNotice: null,
+    statusLedger: [],
     troubleReasons: []
   };
 }
@@ -1490,6 +1735,17 @@ function normalizeState(parsed) {
   parsed.folder = Array.isArray(parsed.folder)
     ? parsed.folder.map(normalizeItemData)
     : [];
+  parsed.folder.forEach((item) => {
+    if (
+      STAGE_TWO_DATA.mallProducts.some(
+        (product) =>
+          product.type === "collection" &&
+          product.itemTemplateId === item.templateId
+      )
+    ) {
+      item.acquisition = "mall";
+    }
+  });
   parsed.listings = Array.isArray(parsed.listings)
     ? parsed.listings.map((listing) => {
         if (listing?.itemSnapshot) {
@@ -1553,6 +1809,9 @@ function normalizeState(parsed) {
   parsed.arrested = Boolean(parsed.arrested);
   parsed.troubleReasons ??= [];
   parsed.dailyLedger ??= [];
+  parsed.statusLedger = Array.isArray(parsed.statusLedger)
+    ? parsed.statusLedger
+    : [];
   parsed.buyerSchedule ??= [];
   parsed.mallStock = Array.isArray(parsed.mallStock)
     ? parsed.mallStock
@@ -1569,6 +1828,21 @@ function normalizeState(parsed) {
   parsed.cleanupShield = Math.max(
     0,
     Number(parsed.cleanupShield) || 0
+  );
+  parsed.contrabandSales = Math.max(
+    0,
+    Number(parsed.contrabandSales) || 0
+  );
+  parsed.contrabandAttention = Math.max(
+    0,
+    Number(parsed.contrabandAttention) || 0
+  );
+  parsed.contrabandPending = Array.isArray(parsed.contrabandPending)
+    ? parsed.contrabandPending
+    : [];
+  parsed.complianceUnlocked = Boolean(parsed.complianceUnlocked);
+  parsed.complianceBonusReceived = Boolean(
+    parsed.complianceBonusReceived
   );
   parsed.archetypeScores =
     parsed.archetypeScores && typeof parsed.archetypeScores === "object"
@@ -1588,12 +1862,65 @@ function normalizeState(parsed) {
   parsed.searchResult ??= null;
   parsed.keywordTipShown ??= false;
   parsed.listingDraft ??= null;
-  if (parsed.listingDraft) parsed.listingDraft.fakeItemId ??= null;
+  if (parsed.listingDraft) {
+    parsed.listingDraft.fakeItemId ??= null;
+    parsed.listingDraft.forgeryTargetId ??= null;
+  }
   parsed.summaryOpen ??= false;
   parsed.troublePopupOpen ??= false;
-  parsed.troubleNotice ??= null;
+  if (!parsed.statusNotice && parsed.troubleNotice) {
+    parsed.statusNotice = {
+      ...parsed.troubleNotice,
+      type: "trouble",
+      reason: parsed.troubleNotice.label ?? "麻烦值发生变化",
+      current: parsed.troubleNotice.total ?? parsed.trouble,
+      changes: [
+        {
+          type: "trouble",
+          amount: parsed.troubleNotice.amount,
+          reason: parsed.troubleNotice.label ?? "麻烦值发生变化",
+          current: parsed.troubleNotice.total ?? parsed.trouble
+        }
+      ]
+    };
+  }
+  parsed.statusNotice ??= null;
+  delete parsed.troubleNotice;
   parsed.newsVisible ??= false;
   parsed.newsRead ??= false;
+  parsed.marketTrend ??= null;
+  if (parsed.marketTrend) {
+    parsed.marketTrend.startDay =
+      Number(parsed.marketTrend.startDay) || parsed.day;
+    parsed.marketTrend.endDay =
+      Number(parsed.marketTrend.endDay) ||
+      parsed.marketTrend.startDay + 3;
+  }
+  parsed.threatSchedule = Array.isArray(parsed.threatSchedule)
+    ? parsed.threatSchedule
+    : createThreatSchedule(Math.max(2, parsed.day));
+  parsed.threatHistory = Array.isArray(parsed.threatHistory)
+    ? parsed.threatHistory
+    : [];
+  parsed.threatResolvedCount = Math.max(
+    0,
+    Number(parsed.threatResolvedCount) || parsed.threatHistory.length
+  );
+  parsed.folderCaseStage = Math.max(
+    0,
+    Math.min(3, Number(parsed.folderCaseStage) || 0)
+  );
+  parsed.universalUnlockStage = Math.max(
+    0,
+    Number(parsed.universalUnlockStage) || 0
+  );
+  parsed.folderView = ["clues", "mall"].includes(parsed.folderView)
+    ? parsed.folderView
+    : "archive";
+  parsed.ending ??= null;
+  if (!parsed.folder.some((item) => item.clue)) {
+    parsed.folder.push(createClueItem());
+  }
   parsed.news = Array.isArray(parsed.news)
     ? parsed.news.map((news) => ({
         ...news,
@@ -1633,6 +1960,10 @@ function normalizeBuyerChat(chat, sourceState) {
   chat.trust = Number.isFinite(Number(chat.trust)) ? Number(chat.trust) : 50;
   chat.questionIndex = Math.max(0, Number(chat.questionIndex) || 0);
   chat.buyer = chat.buyer && typeof chat.buyer === "object" ? chat.buyer : {};
+  const profile = STAGE_TWO_DATA.buyerProfiles.find(
+    (candidate) => candidate.id === chat.buyer.id
+  );
+  chat.buyer = { ...(profile ?? {}), ...chat.buyer };
   chat.buyer.name ||= "匿名买家";
   chat.buyer.displayId ||= "访客-001";
   chat.buyer.avatar ||= "crane";
@@ -1641,7 +1972,7 @@ function normalizeBuyerChat(chat, sourceState) {
   const listing = sourceState.listings.find(
     (candidate) => candidate.id === chat.listingId
   );
-  const questions = selectBuyerQuestions(listing?.itemSnapshot);
+  const questions = selectBuyerQuestions(listing?.itemSnapshot, chat.buyer);
   if (!Array.isArray(chat.buyer.questions) || !chat.buyer.questions.length) {
     chat.buyer.questions = questions;
   }
@@ -1701,6 +2032,16 @@ function createFolderItem() {
   const templates = STAGE_TWO_DATA.folderItemPool;
   const selected = templates[Math.floor(Math.random() * templates.length)];
   return initializeItem(selected);
+}
+
+function createClueItem() {
+  const templates = STAGE_TWO_DATA.clueItemPool;
+  const selected = templates[Math.floor(Math.random() * templates.length)];
+  return {
+    ...initializeItem(selected),
+    clue: true,
+    sellable: false
+  };
 }
 
 function initializeItem(item) {
@@ -1810,6 +2151,8 @@ function normalizeItemData(item) {
     ? item.unlockedTags.filter(Boolean)
     : [];
   item.searched = item.searched === true;
+  item.clue = item.clue === true;
+  if (item.clue) item.sellable = false;
   item.discoveredCode =
     item.discoveredCode === true ||
     item.facts.some((fact) => fact.kind === "code" && fact.discovered);
@@ -1923,9 +2266,39 @@ function pickDailyAuctionBox() {
   return boxes[Math.floor(Math.random() * boxes.length)];
 }
 
-function pickBuyerProfile() {
-  const buyers = STAGE_TWO_DATA.buyerProfiles;
+function pickBuyerProfile(listing) {
+  const targetIds = listing?.targetBuyerIds ?? [];
+  const targeted = STAGE_TWO_DATA.buyerProfiles.filter((buyer) =>
+    targetIds.includes(buyer.id)
+  );
+  const buyers = targeted.length ? targeted : STAGE_TWO_DATA.buyerProfiles;
   return buyers[Math.floor(Math.random() * buyers.length)];
+}
+
+function getDraftForgeryTarget(draft) {
+  return STAGE_TWO_DATA.forgeryTargets.find(
+    (candidate) => candidate.id === draft?.forgeryTargetId
+  );
+}
+
+function getReplyRiskLevel(reply) {
+  if (reply?.risk === "deceptive" || reply?.risk === "vague") {
+    return reply.risk;
+  }
+  const text = String(reply?.text ?? "");
+  const risky = (STAGE_TWO_DATA.riskPhrases ?? []).some((phrase) =>
+    text.includes(phrase)
+  );
+  return risky ? "deceptive" : "safe";
+}
+
+function getBuyerTradeReaction(buyer, outcome) {
+  const feedback = buyer?.resultFeedback ?? {};
+  const text =
+    outcome === "caught"
+      ? `${buyer?.name ?? "买家"}已经停止回复。`
+      : feedback[outcome];
+  return text ? ` ${text}` : "";
 }
 
 function pickRunRules() {
@@ -1943,34 +2316,56 @@ function refreshActiveRules() {
     .map((rule) => rule.id);
 }
 
-function selectBuyerQuestions(item) {
+function selectBuyerQuestions(item, profile = {}) {
   normalizeItemData(item);
+  const focus = new Set(profile?.verificationFocus ?? []);
   const informationFacts = shuffle(
     [...(item?.facts ?? [])].filter((fact) =>
       ["code", "name", "source", "feature"].includes(fact.kind)
     )
-  ).slice(0, 2);
+  )
+    .sort(
+      (left, right) =>
+        Number(focus.has(right.kind)) - Number(focus.has(left.kind))
+    )
+    .slice(0, 2);
   const templates = STAGE_TWO_DATA.buyerQuestionTemplates;
   const factualQuestions = informationFacts.map((fact) => {
     const template = templates[fact.kind] ?? templates.proof;
-    return {
+    return personalizeBuyerQuestion({
       id: fact.id,
       kind: fact.kind,
       text: fact.discovered
         ? template.text
         : `${template.text} 交易前需要你给出准确答案。`,
       replies: buildRepliesForFact(fact)
-    };
+    }, profile);
   });
   const generalPool = STAGE_TWO_DATA.buyerQuestionPool.filter(
     (question) =>
       !["code", "source", "proof"].includes(question.kind)
   );
-  const generalQuestions = shuffle([...generalPool]).slice(
-    0,
-    3 - factualQuestions.length
+  const preferredKinds = new Set(
+    profile?.questionPreference ?? profile?.verificationFocus ?? []
   );
+  const generalQuestions = shuffle([...generalPool])
+    .sort(
+      (left, right) =>
+        Number(preferredKinds.has(right.kind)) -
+        Number(preferredKinds.has(left.kind))
+    )
+    .slice(0, 3 - factualQuestions.length)
+    .map((question) => personalizeBuyerQuestion(question, profile));
   return [...factualQuestions, ...generalQuestions];
+}
+
+function personalizeBuyerQuestion(question, profile) {
+  const lead = String(profile?.questionLead ?? "");
+  const suffix = String(profile?.questionSuffix ?? "");
+  return {
+    ...question,
+    text: `${lead}${question.text}${suffix}`.trim()
+  };
 }
 
 function buildRepliesForFact(fact) {
@@ -2023,6 +2418,83 @@ function buildRepliesForFact(fact) {
     { id: "wrong_1", text: decoys[0], trust: -25 },
     { id: "wrong_2", text: decoys[1] ?? "不确定", trust: -25 }
   ]);
+}
+
+function getDeceptionRisk(chat, listing) {
+  const history = Array.isArray(chat?.history) ? chat.history : [];
+  const deceptive = history.filter(
+    (entry) => entry?.riskLevel === "deceptive"
+  );
+  const vague = history.filter((entry) => entry?.riskLevel === "vague");
+  const focus = new Set(chat?.buyer?.verificationFocus ?? []);
+  const focusHits = deceptive.filter((entry) =>
+    focus.has(entry?.questionKind)
+  ).length;
+  const listingItem = listing?.itemSnapshot ?? {};
+  const priceRatio =
+    Number(listing?.price ?? 0) /
+    Math.max(1, Number(listing?.priceRange?.[1] ?? 1));
+  const police =
+    Boolean(listing?.fakeItemId) ||
+    listingItem.category === "special" ||
+    priceRatio >= 1.45 ||
+    Number(listing?.price ?? 0) >= 1500;
+  return {
+    count: deceptive.length,
+    vagueCount: vague.length,
+    focusHits,
+    priceRatio,
+    police,
+    level: Math.min(3, deceptive.length + (focusHits > 0 ? 1 : 0))
+  };
+}
+
+function getDeceptionVerification(risk, chat, listing) {
+  const baseRate = Number(chat?.buyer?.verificationRate) || 0.14;
+  let chance =
+    baseRate +
+    Math.max(0, risk.count - 1) * 0.13 +
+    risk.focusHits * 0.08 +
+    Math.max(0, risk.priceRatio - 1) * 0.24;
+  if (listing?.confidence === "low") chance += 0.06;
+  if (hasActiveRule("strict_review")) chance += 0.1;
+  if (listing?.fakeItemId) chance += 0.08;
+  chance = Math.max(0.08, Math.min(0.78, chance));
+  return {
+    chance,
+    reputationLoss: risk.level >= 2 ? 8 : 5,
+    trouble: risk.police ? 3 : risk.level >= 2 ? 2 : 1,
+    police: risk.police
+  };
+}
+
+function applyPostSaleDeception(chat, listing, sale) {
+  const risk = getDeceptionRisk(chat, listing);
+  if (!risk.count) return null;
+  const verification = getDeceptionVerification(risk, chat, listing);
+  const chance = Math.max(0.06, Math.min(0.55, verification.chance * 0.55));
+  if (Math.random() >= chance) return null;
+  const refundRate = Math.min(0.55, 0.24 + risk.count * 0.07);
+  return {
+    refund: roundToTen(Math.max(50, sale.netSale * refundRate)),
+    trouble: Math.max(2, verification.trouble),
+    reason: "成交后识破欺骗",
+    police: risk.police
+  };
+}
+
+function escalatePoliceInvestigation(reason) {
+  if (state.policeCase) {
+    state.policeCase.open = true;
+    state.policeCase.reason = reason;
+    return;
+  }
+  state.policeCase = {
+    stage: 1,
+    deadlineDay: state.day + 1,
+    open: true,
+    reason
+  };
 }
 
 function shuffle(items) {
@@ -2141,7 +2613,7 @@ function applyVisitorChoice(visitor, action) {
   const accepted = action === "accept";
   if (visitor.type === "collector") {
     if (!accepted) {
-      state.reputation = Math.max(0, state.reputation - 1);
+      recordReputation(-1, "谢绝收藏家拜访");
       return "你谢绝了收藏家，对方没有留下联系方式。";
     }
     const activeEffects = new Set(
@@ -2150,7 +2622,7 @@ function applyVisitorChoice(visitor, action) {
     const combos = getActiveCollectionCombos().length;
     const reward = 500 + activeEffects * 260 + combos * 600;
     state.cash += reward;
-    state.reputation += combos > 0 ? 4 : 2;
+    recordReputation(combos > 0 ? 4 : 2, "收藏家认可店铺整理");
     recordActivity("收藏家拜访", reward);
     return `收藏家认可了你的整理方式，支付了 ${formatCurrency(reward)}。`;
   }
@@ -2160,20 +2632,20 @@ function applyVisitorChoice(visitor, action) {
       (listing) => listing.fakeItemId && listing.status === "active"
     );
     if (!accepted) {
-      state.reputation = Math.max(0, state.reputation - 6);
+      recordReputation(-6, "拒绝平台审核");
       recordTrouble(2, "拒绝平台审核");
       return "你拖延了审核，平台降低了你的信誉。";
     }
     if (riskyListings.length > 0) {
       const fine = Math.min(state.cash, 300 + riskyListings.length * 250);
       state.cash -= fine;
-      state.reputation = Math.max(0, state.reputation - 4);
+      recordReputation(-4, "平台审核发现伪造商品");
       recordActivity("平台审核罚款", -fine);
       recordTrouble(1, "平台审核发现伪造商品");
       recordArchetypeProgress("risk", 2);
       return `审核员识破了伪造商品，罚款 ${formatCurrency(fine)}。`;
     }
-    state.reputation += 4;
+    recordReputation(4, "平台审核通过");
     return "平台审核通过，信誉提高。";
   }
 
@@ -2191,7 +2663,7 @@ function applyVisitorChoice(visitor, action) {
     item.discoveredSource = true;
     item.baseValue = roundToTen(item.baseValue * 1.12);
     item.tagConfidence = "high";
-    state.reputation += 2;
+    recordReputation(2, "鉴定师确认物品资料");
     return `${item.name}已经完成鉴定，完整资料得到确认。`;
   }
 
@@ -2202,10 +2674,11 @@ function applyVisitorChoice(visitor, action) {
       return "你拒绝检查，调查压力迅速上升。";
     }
     removeAllSpecialItems();
-    state.trouble = Math.max(0, state.trouble - 2);
-    state.reputation += 3;
+    recordTrouble(-2, "配合调查员检查");
+    recordReputation(3, "配合调查员检查");
     recordArchetypeProgress("compliant");
-    return "你配合了检查，风险物品被清理，信誉提高。";
+    const complianceReward = grantComplianceReward("配合调查开启合规通道");
+    return `你配合了检查，风险物品被清理，信誉提高。${complianceReward}`;
   }
 
   if (visitor.type === "wholesaler") {
@@ -2234,16 +2707,20 @@ function applyVisitorChoice(visitor, action) {
       .filter((item) => item.category === "special")
       .sort((a, b) => b.baseValue - a.baseValue)[0];
     if (!special) {
-      state.reputation += 1;
+      recordReputation(1, "拒绝无记录交易");
       return "神秘买家没有找到特殊物品，只留下了一张空名片。";
     }
     const price = roundToTen(special.baseValue * 1.5);
-    state.cash += price;
+    const contrabandSale = applyContrabandSale(
+      special,
+      price,
+      "神秘买家"
+    );
+    state.cash += contrabandSale.deposit;
     removeSpecialItemEverywhere(special.id);
-    recordActivity("神秘买家秘密交易", price);
-    recordTrouble(4, "向神秘买家出售特殊物品");
+    recordActivity("神秘买家秘密交易", contrabandSale.deposit);
     recordArchetypeProgress("risk", 3);
-    return `特殊物品以 ${formatCurrency(price)} 秘密成交，但麻烦也增加了。`;
+    return `${special.name}已经秘密成交。${contrabandSale.text}`;
   }
 
   return "人物事件已经处理。";
@@ -2263,13 +2740,44 @@ function resolveTradeObstruction(chat, listing) {
       strictPenalty -
       (hasArchetypeEffect("archetype_negotiation") ? 0.04 : 0);
     if (Math.random() < Math.max(0.08, fakeChance)) {
-      state.reputation = Math.max(0, state.reputation - 6);
+      recordReputation(-6, "伪造交易被买家识破");
       recordTrouble(3, "伪造交易被买家识破");
+      if (
+        listing.fakeItemId ||
+        listing.itemSnapshot?.category === "special" ||
+        listing.price >= 1500
+      ) {
+        escalatePoliceInvestigation("高风险伪造交易被识破");
+      }
       recordArchetypeProgress("risk", 2);
       return failListingTrade(
         listing,
         "伪造被识破",
         "买家发现商品资料不一致，交易终止，信誉和麻烦都受到影响。",
+        true
+      );
+    }
+  }
+
+  const deceptionRisk = getDeceptionRisk(chat, listing);
+  if (deceptionRisk.count > 0) {
+    const verification = getDeceptionVerification(deceptionRisk, chat, listing);
+    if (Math.random() < verification.chance) {
+      recordReputation(-verification.reputationLoss, "欺骗交易被当场识破");
+      recordTrouble(verification.trouble, "欺骗交易被当场识破");
+      chat.blacklisted = true;
+      chat.deceptionDetected = "onsite";
+      if (verification.police) {
+        escalatePoliceInvestigation("高风险欺骗交易被当场识破");
+      }
+      recordArchetypeProgress("risk", 2);
+      return failListingTrade(
+        listing,
+        "欺骗被当场识破",
+        `买家核对了你提到的信息，发现承诺无法证明，立即终止交易并将你拉黑。${getBuyerTradeReaction(
+          chat.buyer,
+          "caught"
+        )}`,
         true
       );
     }
@@ -2284,7 +2792,7 @@ function resolveTradeObstruction(chat, listing) {
   const priceFailureChance =
     priceRatio > 1 ? Math.min(0.72, (priceRatio - 1) * 0.5) : 0;
   if (priceFailureChance > 0 && Math.random() < priceFailureChance) {
-    state.reputation = Math.max(0, state.reputation - 2);
+    recordReputation(-2, "报价过高导致买家放弃");
     return failListingTrade(
       listing,
       "买家放弃购买",
@@ -2298,7 +2806,7 @@ function resolveTradeObstruction(chat, listing) {
     const failureChance =
       chat.trust >= 70 ? 0.24 : chat.trust >= 35 ? 0.46 : 0.68;
     if (Math.random() < failureChance) {
-      state.reputation = Math.max(0, state.reputation - 1);
+      recordReputation(-1, "拒绝降价导致交易取消");
       return failListingTrade(
         listing,
         "买家取消交易",
@@ -2453,24 +2961,238 @@ function recordActivity(label, amount = 0) {
   });
 }
 
+function applyContrabandSale(item, grossAmount, source) {
+  const config = STAGE_TWO_DATA.contrabandConfig;
+  const payoutMultiplier =
+    config.payoutMultipliers[
+      Math.min(state.contrabandSales, config.payoutMultipliers.length - 1)
+    ];
+  const adjustedGross = roundToTen(grossAmount * payoutMultiplier);
+  const [minRate, maxRate] = config.depositRateRange;
+  const depositRate =
+    minRate + Math.random() * Math.max(0, maxRate - minRate);
+  const deposit = roundToTen(adjustedGross * depositRate);
+  const balance = Math.max(0, adjustedGross - deposit);
+  const [minWindow, maxWindow] = config.riskWindowDays;
+  const riskWindow =
+    minWindow +
+    Math.floor(Math.random() * Math.max(1, maxWindow - minWindow + 1));
+  state.contrabandSales += 1;
+  state.contrabandAttention = Math.min(
+    5,
+    (state.contrabandAttention ?? 0) + 1
+  );
+  const pending = {
+    id: `contraband_${Date.now().toString(36)}_${state.contrabandSales}`,
+    itemName: item?.name ?? "特殊物品",
+    source,
+    gross: adjustedGross,
+    deposit,
+    balance,
+    dueDay: state.day + riskWindow,
+    attention: state.contrabandAttention,
+    payoutMultiplier
+  };
+  state.contrabandPending.push(pending);
+  recordTrouble(
+    Math.min(4, state.contrabandAttention),
+    "违禁品交易增加永久关注度"
+  );
+  recordArchetypeProgress("risk", 2);
+  return {
+    deposit,
+    balance,
+    dueDay: pending.dueDay,
+    attention: state.contrabandAttention,
+    text: `本次只收到定金 ${formatCurrency(
+      deposit
+    )}，尾款 ${formatCurrency(balance)} 将在第 ${pending.dueDay} 天结算。永久关注度：${
+      state.contrabandAttention
+    }。`
+  };
+}
+
+function processContrabandAtDayEnd() {
+  if (!state.contrabandPending?.length) return "";
+  const config = STAGE_TWO_DATA.contrabandConfig;
+  const due = state.contrabandPending.filter(
+    (entry) => entry.dueDay <= state.day
+  );
+  if (!due.length) return "";
+  const remaining = state.contrabandPending.filter(
+    (entry) => entry.dueDay > state.day
+  );
+  const messages = [];
+  due.forEach((entry) => {
+    const chance = Math.min(
+      0.86,
+      config.baseInvestigationChance +
+        entry.attention * config.attentionChanceStep
+    );
+    if (Math.random() < chance) {
+      const clawback = Math.min(
+        state.cash,
+        roundToTen(entry.deposit * 0.45)
+      );
+      state.cash -= clawback;
+      const fine = Math.min(
+        state.cash,
+        700 + entry.attention * 350
+      );
+      state.cash -= fine;
+      recordActivity("违禁品追缴与罚金", -(clawback + fine));
+      recordTrouble(4, "违禁品尾款窗口被调查");
+      escalatePoliceInvestigation("违禁品尾款结算时被调查");
+      messages.push(
+        `${entry.itemName}的尾款被冻结，追缴 ${formatCurrency(
+          clawback
+        )}，另处罚金 ${formatCurrency(fine)}。`
+      );
+    } else {
+      state.cash += entry.balance;
+      recordActivity("违禁品尾款到账", entry.balance);
+      messages.push(
+        `${entry.itemName}的尾款 ${formatCurrency(entry.balance)} 已到账。`
+      );
+    }
+  });
+  state.contrabandPending = remaining;
+  return messages.join(" ");
+}
+
+function grantComplianceReward(reason) {
+  state.complianceUnlocked = true;
+  if (state.complianceBonusReceived) return "";
+  state.complianceBonusReceived = true;
+  const reward = 600;
+  state.cash += reward;
+  state.protectionCharges += 1;
+  recordActivity("合规通道奖励", reward);
+  recordReputation(2, reason);
+  return `合规通道已解锁，获得 ${formatCurrency(
+    reward
+  )} 与 1 次保护服务。`;
+}
+
+function recordStatusChange(type, before, after, amount, reason) {
+  if (!amount || before === after) return;
+  const now = Date.now();
+  const previous = state.statusNotice;
+  const canMerge =
+    previous && now - Number(previous.updatedAt ?? 0) < 700;
+  const changes = canMerge ? [...(previous.changes ?? [])] : [];
+  const change = {
+    id: `status_change_${now.toString(36)}_${changes.length}`,
+    type,
+    amount,
+    reason,
+    before,
+    current: after
+  };
+  changes.push(change);
+  state.statusNotice = {
+    id: canMerge
+      ? previous.id
+      : `status_notice_${now.toString(36)}`,
+    updatedAt: now,
+    type,
+    amount,
+    reason,
+    current: after,
+    total: after,
+    changes: changes.slice(-5)
+  };
+  state.statusLedger.unshift({
+    ...change,
+    id: `status_ledger_${now.toString(36)}_${state.statusLedger.length}`
+  });
+  state.statusLedger = state.statusLedger.slice(0, 30);
+}
+
+function recordReputation(amount, reason) {
+  const before = state.reputation;
+  state.reputation = Math.max(0, before + Number(amount || 0));
+  recordStatusChange(
+    "reputation",
+    before,
+    state.reputation,
+    state.reputation - before,
+    reason
+  );
+  return state.reputation - before;
+}
+
 function recordTrouble(amount, reason) {
   const before = state.trouble;
-  state.trouble = Math.min(CONFIG.maxTrouble, state.trouble + amount);
-  state.troubleNotice = {
-    id: `trouble_notice_${Date.now().toString(36)}`,
-    label: reason,
-    amount,
-    total: state.trouble
-  };
-  state.troubleReasons.unshift({
-    id: `trouble_${Date.now().toString(36)}_${state.troubleReasons.length}`,
-    label: reason,
-    amount
-  });
-  state.troubleReasons = state.troubleReasons.slice(0, 6);
+  state.trouble = Math.max(
+    0,
+    Math.min(CONFIG.maxTrouble, before + Number(amount || 0))
+  );
+  const applied = state.trouble - before;
+  recordStatusChange(
+    "trouble",
+    before,
+    state.trouble,
+    applied,
+    reason
+  );
+  if (applied > 0) {
+    state.troubleReasons.unshift({
+      id: `trouble_${Date.now().toString(36)}_${state.troubleReasons.length}`,
+      label: reason,
+      amount: applied
+    });
+    state.troubleReasons = state.troubleReasons.slice(0, 6);
+  }
   if (before < 5 && state.trouble >= 5) {
     state.troublePopupOpen = true;
   }
+  if (state.trouble >= CONFIG.maxTrouble) {
+    triggerEnding("trouble_overload");
+  }
+  return applied;
+}
+
+function advanceClueCase() {
+  const clueItems = getAllOwnedItems().filter((item) => item?.clue);
+  const discoveredFacts = clueItems.reduce(
+    (sum, item) =>
+      sum +
+      (item.facts ?? []).filter((fact) => fact.discovered).length,
+    0
+  );
+  const stage =
+    discoveredFacts >= 4 ? 3 : discoveredFacts >= 2 ? 2 : discoveredFacts >= 1 ? 1 : 0;
+  state.folderCaseStage = Math.max(
+    Number(state.folderCaseStage) || 0,
+    stage
+  );
+  state.universalUnlockStage = Math.max(
+    Number(state.universalUnlockStage) || 0,
+    stage
+  );
+}
+
+function triggerEnding(endingId) {
+  if (state.ending) return;
+  const template = STAGE_TWO_DATA.endings?.[endingId];
+  if (!template) return;
+  state.ending = {
+    id: endingId,
+    ...template,
+    day: state.day,
+    cash: state.cash,
+    debt: state.totalDebt,
+    reputation: state.reputation,
+    trouble: state.trouble
+  };
+  state.threatEvent = null;
+  state.newsVisible = false;
+  state.summaryOpen = false;
+  state.paymentNoticeOpen = false;
+  state.troublePopupOpen = false;
+  state.statusNotice = null;
+  state.lastMessage = template.title;
 }
 
 function hasActiveRule(ruleId) {
@@ -2807,15 +3529,31 @@ function removeSpecialItemEverywhere(itemId) {
 
 function isLoanDue() {
   return Boolean(
-    state.nextPayment &&
+    state.totalDebt > 0 &&
+      state.nextPayment &&
       state.day >= state.nextPayment.dueDay
   );
 }
 
 function completeLoanPayment() {
-  const paidAmount = state.nextPayment.amount;
+  const paidAmount = Math.min(
+    state.nextPayment.amount,
+    state.totalDebt
+  );
   state.cash -= paidAmount;
+  state.totalDebt = Math.max(0, state.totalDebt - paidAmount);
   recordActivity("偿还贷款", -paidAmount);
+  if (state.totalDebt <= 0) {
+    state.nextPayment = {
+      amount: 0,
+      dueDay: state.nextPayment.dueDay,
+      overdue: false
+    };
+    state.paymentNoticeOpen = false;
+    state.paymentNoticeDay = state.day;
+    triggerEnding("debt_free");
+    return paidAmount;
+  }
   state.nextPayment = {
     amount: paidAmount + 500,
     dueDay: state.nextPayment.dueDay + CONFIG.paymentIntervalDays,
@@ -2824,12 +3562,15 @@ function completeLoanPayment() {
   state.overdueCount = 0;
   state.paymentNoticeOpen = false;
   state.paymentNoticeDay = state.day;
+  return paidAmount;
 }
 
 function settleLoanAtDayEnd() {
+  if (state.ending || state.totalDebt <= 0) return "全部贷款已经结清。";
   if (!isLoanDue()) return "尚未到还款日。";
-  if (state.cash >= state.nextPayment.amount) {
-    const paidAmount = state.nextPayment.amount;
+  const dueAmount = Math.min(state.nextPayment.amount, state.totalDebt);
+  if (state.cash >= dueAmount) {
+    const paidAmount = dueAmount;
     completeLoanPayment();
     return `已偿还 ${formatCurrency(paidAmount)}。`;
   }
@@ -2858,39 +3599,244 @@ function schedulePaymentNotice() {
 }
 
 function prepareDailyNews() {
-  const template =
-    STAGE_TWO_DATA.newsTemplates[
-      Math.floor(Math.random() * STAGE_TWO_DATA.newsTemplates.length)
-    ];
-  state.news = [
-    {
-      ...template,
-      day: state.day,
-      duration: template.duration ?? "今天有效"
-    }
-  ];
+  const previousTrend = state.marketTrend;
+  let nextTrend = previousTrend;
+  let popup = null;
+
+  if (previousTrend && state.day > previousTrend.endDay) {
+    nextTrend = null;
+    popup = {
+      id: `trend_end_${previousTrend.id}_${state.day}`,
+      title: `市场趋势结束：${previousTrend.title}`,
+      effect: "市场价格恢复常态。",
+      detail: `“${previousTrend.label}”的影响已经结束，新的交易将按普通行情结算。`,
+      duration: "趋势结束",
+      category: "all",
+      multiplier: 1
+    };
+    state.marketEffect = null;
+  }
+
+  if (!nextTrend) {
+    const templates = STAGE_TWO_DATA.newsTemplates.filter(
+      (template) => template.id !== previousTrend?.id
+    );
+    const template =
+      templates[Math.floor(Math.random() * templates.length)] ??
+      STAGE_TWO_DATA.newsTemplates[0];
+    const [minDuration, maxDuration] = template.durationRange ?? [4, 7];
+    const duration =
+      minDuration +
+      Math.floor(Math.random() * (maxDuration - minDuration + 1));
+    nextTrend = {
+      id: template.id,
+      title: template.title,
+      label: template.label ?? template.title.slice(0, 6),
+      effect: template.effect,
+      detail: template.detail,
+      category: template.category,
+      multiplier: template.multiplier,
+      startDay: state.day,
+      endDay: state.day + duration - 1,
+      duration
+    };
+    popup = {
+      ...nextTrend,
+      id: `trend_start_${nextTrend.id}_${state.day}`,
+      title: popup
+        ? `市场趋势切换：${nextTrend.title}`
+        : `市场趋势：${nextTrend.title}`,
+      duration: `持续 ${duration} 天`
+    };
+  }
+
+  state.marketTrend = nextTrend;
+  if (nextTrend) {
+    state.marketEffect = {
+      category: nextTrend.category,
+      multiplier: nextTrend.multiplier,
+      expiresDay: nextTrend.endDay
+    };
+  }
+  state.news = popup ? [{ ...popup, day: state.day }] : [];
+  state.newsVisible = Boolean(popup);
+  state.newsRead = !popup;
   state.nextNewsTime = DAY_START;
-  state.marketEffect = {
-    category: template.category,
-    multiplier: template.multiplier,
-    expiresDay: state.day
-  };
 }
 
 function maybeCreateThreatEvent() {
-  if (state.day < 3 || state.threatEvent || state.trouble < 3) return;
-  if (Math.random() > 0.35) return;
+  if (state.ending || state.threatEvent || state.threatResolvedCount >= 5) return;
+  state.threatSchedule ??= createThreatSchedule(Math.max(2, state.day));
+  const scheduleIndex = state.threatSchedule.findIndex(
+    (entry) => entry.day <= state.day && entry.status === "scheduled"
+  );
+  if (scheduleIndex < 0) return;
+  state.threatSchedule.splice(scheduleIndex, 1);
   if (state.protectionCharges > 0) {
     state.protectionCharges -= 1;
     state.lastMessage = "保护服务提前处理了一次匿名威胁。";
+    state.threatResolvedCount += 1;
     return;
   }
-  const amounts = [400, 600, 800];
-  state.threatEvent = {
+  const templates = STAGE_TWO_DATA.threatTemplates ?? [];
+  if (!templates.length) return;
+  const recentIds = new Set(
+    state.threatHistory.slice(-2).map((entry) => entry.templateId)
+  );
+  const available = templates.filter((template) => !recentIds.has(template.id));
+  const template =
+    available[Math.floor(Math.random() * available.length)] ??
+    templates[Math.floor(Math.random() * templates.length)];
+  state.threatEvent = createThreatEvent(template);
+}
+
+function createThreatSchedule(startDay = 2) {
+  const count = Math.random() < 0.5 ? 4 : 5;
+  let day = startDay + 1 + Math.floor(Math.random() * 2);
+  return Array.from({ length: count }, (_, index) => {
+    const entry = {
+      id: `threat_schedule_${index}_${Math.random().toString(36).slice(2, 7)}`,
+      day,
+      status: "scheduled"
+    };
+    day += 2 + Math.floor(Math.random() * 3);
+    return entry;
+  });
+}
+
+function createThreatEvent(template) {
+  const [minAmount, maxAmount] = template.amountRange ?? [0, 0];
+  let amount =
+    minAmount +
+    Math.floor(Math.random() * Math.max(1, maxAmount - minAmount + 1));
+  let targetId = null;
+  let targetLabel = "";
+
+  if (template.target === "item") {
+    const item = [...state.inventory, ...state.folder]
+      .filter((candidate) => !candidate.clue)
+      .sort((left, right) => right.baseValue - left.baseValue)[0];
+    if (item) {
+      targetId = item.id;
+      targetLabel = item.name;
+    }
+  }
+
+  if (template.target === "listing") {
+    const listing = state.listings.find(
+      (candidate) => candidate.status === "active"
+    );
+    if (listing) {
+      targetId = listing.id;
+      targetLabel = listing.itemSnapshot?.name ?? listing.title;
+    }
+  }
+
+  let resolvedTarget = template.target;
+  if (!targetId && template.target !== "cash") {
+    resolvedTarget = "cash";
+    targetId = null;
+    targetLabel = "店铺现金";
+    amount = Math.min(Math.max(300, amount), state.cash);
+  }
+
+  return {
+    ...template,
     id: `threat_${Date.now().toString(36)}`,
-    amount: amounts[Math.floor(Math.random() * amounts.length)],
-    message: "有人要求你归还一件来路不明的高价值物品。"
+    templateId: template.id,
+    stage: 1,
+    amount: resolvedTarget === "cash" ? Math.min(amount, state.cash) : amount,
+    target: resolvedTarget,
+    targetId,
+    targetLabel
   };
+}
+
+function applyThreatCompliance(event) {
+  if (event.target === "item") {
+    const item =
+      state.inventory.find((candidate) => candidate.id === event.targetId) ??
+      state.folder.find((candidate) => candidate.id === event.targetId);
+    if (item) {
+      removeThreatTargetItem(item.id);
+      return `交出了${item.name}，威胁暂时解除。`;
+    }
+  }
+
+  if (event.target === "listing") {
+    const listing = state.listings.find(
+      (candidate) => candidate.id === event.targetId
+    );
+    if (listing) {
+      listing.status = "failed";
+      state.buyerSchedule = (state.buyerSchedule ?? []).filter(
+        (entry) => entry.listingId !== listing.id
+      );
+      state.buyerChat = null;
+      state.activeListingId = null;
+      restoreListingItem(listing);
+      return "按照要求取消了挂单，商品已经回到库存。";
+    }
+  }
+
+  const loss = Math.min(state.cash, Math.max(0, event.amount));
+  state.cash -= loss;
+  if (loss > 0) recordActivity(`处理${event.title}`, -loss);
+  return `支付了 ${formatCurrency(loss)}，对方暂时离开。`;
+}
+
+function resolveThreatResistance(event) {
+  if (state.protectionCharges > 0) {
+    state.protectionCharges -= 1;
+    recordReputation(3, `反制${event.title}`);
+    return "保护人员及时介入，对方仓促撤离。";
+  }
+  const successChance = state.reputation >= 60 ? 0.45 : 0.25;
+  if (Math.random() < successChance) {
+    recordReputation(2, `成功反制${event.title}`);
+    recordTrouble(-1, `成功反制${event.title}`);
+    return "你留下了对方的证据，威胁被迫中止。";
+  }
+  const result = applyThreatCompliance(event);
+  recordTrouble(2, `无视${event.title}并遭到报复`);
+  recordArchetypeProgress("risk", 2);
+  return `${result} 对方在离开前造成了额外损失。`;
+}
+
+function removeThreatTargetItem(itemId) {
+  state.inventory = state.inventory.filter((item) => item.id !== itemId);
+  const listingIds = new Set(
+    state.listings
+      .filter(
+        (listing) =>
+          listing.itemId === itemId ||
+          listing.itemSnapshot?.id === itemId
+      )
+      .map((listing) => listing.id)
+  );
+  state.listings = state.listings.filter(
+    (listing) => !listingIds.has(listing.id)
+  );
+  state.buyerSchedule = (state.buyerSchedule ?? []).filter(
+    (entry) => !listingIds.has(entry.listingId)
+  );
+  if (state.buyerChat && listingIds.has(state.buyerChat.listingId)) {
+    state.buyerChat = null;
+    state.activeListingId = null;
+  }
+}
+
+function finishThreatEvent(event, choice) {
+  state.threatResolvedCount += 1;
+  state.threatHistory.push({
+    id: `threat_history_${Date.now().toString(36)}`,
+    templateId: event.templateId,
+    title: event.title,
+    choice,
+    day: state.day
+  });
+  state.threatHistory = state.threatHistory.slice(-8);
+  state.threatEvent = null;
 }
 
 function prepareBuyerSchedule() {

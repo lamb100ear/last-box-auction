@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260920-10";
-import { Game, formatCurrency } from "./game.js?v=20260920-10";
+} from "./data.js?v=20260922-06";
+import { Game, formatCurrency } from "./game.js?v=20260922-06";
 
 let root;
 let workspace;
@@ -206,6 +206,7 @@ function enterDesktop() {
   refreshFromState();
   if (Game.getState().guideStep === "MAIL" && !windowState.has("mail")) {
     openApp("mail");
+    refreshFromState();
   }
 }
 
@@ -353,6 +354,7 @@ function renderDesktop() {
             <span id="taskbar-cash">${formatCurrency(state.cash)}</span>
           </span>
           <span
+            id="taskbar-trouble-pill"
             class="status-pill trouble-${getTroubleTone(state.trouble)}"
             title="麻烦值"
             data-tooltip="麻烦值过高会引发调查或报复。"
@@ -361,7 +363,11 @@ function renderDesktop() {
             <b>麻烦</b>
             <span id="taskbar-trouble">${state.trouble} / ${CONFIG.maxTrouble}</span>
           </span>
-          <span class="status-pill" title="信誉">
+          <span
+            id="taskbar-reputation-pill"
+            class="status-pill reputation-${getReputationTone(state.reputation)}"
+            title="信誉"
+          >
             <b>信誉</b>
             <span id="taskbar-reputation">${state.reputation}</span>
           </span>
@@ -449,12 +455,12 @@ function renderDesktop() {
         </button>
       </aside>
 
-      <aside class="trouble-toast is-hidden" id="trouble-toast" aria-live="assertive">
+      <aside class="trouble-toast status-toast is-hidden" id="status-toast" aria-live="assertive">
         <header>
-          <strong>麻烦值上升</strong>
-          <button type="button" data-action="dismiss-trouble-notice" aria-label="关闭麻烦值提醒">×</button>
+          <strong id="status-toast-title">状态变化</strong>
+          <button type="button" data-action="dismiss-status-notice" aria-label="关闭状态提醒">×</button>
         </header>
-        <div id="trouble-toast-content"></div>
+        <div id="status-toast-content"></div>
       </aside>
 
       <div class="loan-default-overlay is-hidden" id="loan-default-overlay">
@@ -509,6 +515,19 @@ function renderDesktop() {
           <h1>账户已冻结</h1>
           <p>警方完成调查，游戏结束。</p>
           <button type="button" class="legacy-button primary" data-action="pause-restart">重新开始</button>
+        </section>
+      </div>
+
+      <div class="ending-overlay is-hidden" id="ending-overlay">
+        <section class="ending-window">
+          <span class="ending-type" id="ending-type"></span>
+          <h1 id="ending-title"></h1>
+          <strong id="ending-subtitle"></strong>
+          <p id="ending-copy"></p>
+          <div class="ending-stats" id="ending-stats"></div>
+          <button type="button" class="legacy-button primary" data-action="pause-restart">
+            重新开始
+          </button>
         </section>
       </div>
 
@@ -591,6 +610,11 @@ function handleClick(event) {
     else renderStartScreen();
     return;
   }
+  if (earlyAction === "idle-sleep") {
+    hideIdleReminder();
+    performSleep();
+    return;
+  }
   if (earlyAction === "resume-game") {
     togglePause(false);
     return;
@@ -644,7 +668,9 @@ function handleClick(event) {
     replyId,
     outcome,
     productId,
-    choice
+    choice,
+    view,
+    targetId
   } = actionButton.dataset;
 
   if (action === "toggle-start") toggleStartMenu();
@@ -692,8 +718,8 @@ function handleClick(event) {
     Game.acknowledgeTroublePopup();
     refreshFromState();
   }
-  if (action === "dismiss-trouble-notice") {
-    Game.acknowledgeTroubleNotice();
+  if (action === "dismiss-status-notice") {
+    Game.dismissStatusNotice();
     refreshFromState();
   }
   if (action === "police-lawyer") {
@@ -708,16 +734,8 @@ function handleClick(event) {
     Game.resolvePoliceAction("ignore");
     refreshFromState();
   }
-  if (action === "threat-return") {
-    Game.resolveThreat("return");
-    refreshFromState();
-  }
-  if (action === "threat-pay") {
-    Game.resolveThreat("pay");
-    refreshFromState();
-  }
-  if (action === "threat-ignore") {
-    Game.resolveThreat("ignore");
+  if (action === "threat-choice") {
+    Game.resolveThreat(choice);
     refreshFromState();
   }
   if (action === "report-special") {
@@ -784,6 +802,10 @@ function handleClick(event) {
   }
   if (action === "toggle-draft-fake") {
     Game.toggleDraftFakeItem(productId);
+    refreshFromState();
+  }
+  if (action === "toggle-forgery-target") {
+    Game.toggleDraftForgeryTarget(targetId);
     refreshFromState();
   }
   if (action === "visitor-choice") {
@@ -887,6 +909,10 @@ function handleClick(event) {
     closeWindow("item-detail");
     openApp("shop");
   }
+  if (action === "folder-view") {
+    Game.setFolderView(view);
+    refreshFromState();
+  }
   if (action === "toggle-tag") {
     Game.toggleListingTag(tag);
     refreshFromState();
@@ -909,10 +935,6 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "sleep") {
-    performSleep();
-  }
-  if (action === "idle-sleep") {
-    hideIdleReminder();
     performSleep();
   }
   if (action === "dismiss-idle-sleep") {
@@ -974,6 +996,9 @@ function getGuideAnchor(guide) {
 
 function positionGuidePopup(popup, guide) {
   const anchor = getGuideAnchor(guide);
+  if (!anchor && (guide?.target || guide?.id === "NEWS")) {
+    return false;
+  }
   const rootRect = root.getBoundingClientRect();
   const taskbarTop =
     document.querySelector(".taskbar")?.getBoundingClientRect().top ??
@@ -1021,6 +1046,7 @@ function positionGuidePopup(popup, guide) {
   popup.dataset.placement = placement;
   popup.style.left = `${clamp(left, margin, maxLeft)}px`;
   popup.style.top = `${clamp(top, margin, maxTop)}px`;
+  return true;
 }
 
 function updateIdleReminder() {
@@ -1051,12 +1077,13 @@ function hasBlockingOverlay() {
     "#loan-payment-overlay",
     "#loan-default-overlay",
     "#pause-overlay",
-    "#trouble-toast",
+    "#status-toast",
     "#trouble-overlay",
     "#police-overlay",
     "#threat-overlay",
     "#visitor-overlay",
     "#arrest-overlay",
+    "#ending-overlay",
     "#trade-feedback-overlay"
   ].some((selector) => {
     const overlay = document.querySelector(selector);
@@ -1325,19 +1352,33 @@ function updateTaskbar() {
   const cashNode = document.querySelector("#taskbar-cash");
   const troubleNode = document.querySelector("#taskbar-trouble");
   const reputationNode = document.querySelector("#taskbar-reputation");
+  const troublePill = document.querySelector("#taskbar-trouble-pill");
+  const reputationPill = document.querySelector("#taskbar-reputation-pill");
   if (cashNode) cashNode.textContent = formatCurrency(state.cash);
   if (troubleNode) {
     troubleNode.textContent = `${state.trouble} / ${CONFIG.maxTrouble}`;
-    troubleNode.closest(".status-pill")?.classList.remove(
+    troublePill?.classList.remove(
       "trouble-safe",
       "trouble-warn",
       "trouble-danger"
     );
-    troubleNode.closest(".status-pill")?.classList.add(
+    troublePill?.classList.add(
       `trouble-${getTroubleTone(state.trouble)}`
     );
   }
-  if (reputationNode) reputationNode.textContent = String(state.reputation);
+  if (reputationNode) {
+    reputationNode.textContent = String(state.reputation);
+    reputationPill?.classList.remove(
+      "reputation-high",
+      "reputation-medium",
+      "reputation-low"
+    );
+    reputationPill?.classList.add(
+      `reputation-${getReputationTone(state.reputation)}`
+    );
+  }
+  applyStatusFlash(troublePill, "trouble", state.statusNotice);
+  applyStatusFlash(reputationPill, "reputation", state.statusNotice);
 }
 
 function syncDesktopState() {
@@ -1361,8 +1402,9 @@ function syncDesktopState() {
   const loanDefaultReason = document.querySelector("#loan-default-reason");
   const troubleOverlay = document.querySelector("#trouble-overlay");
   const troubleContent = document.querySelector("#trouble-overlay-content");
-  const troubleToast = document.querySelector("#trouble-toast");
-  const troubleToastContent = document.querySelector("#trouble-toast-content");
+  const statusToast = document.querySelector("#status-toast");
+  const statusToastTitle = document.querySelector("#status-toast-title");
+  const statusToastContent = document.querySelector("#status-toast-content");
   const policeOverlay = document.querySelector("#police-overlay");
   const policeContent = document.querySelector("#police-overlay-content");
   const threatOverlay = document.querySelector("#threat-overlay");
@@ -1370,6 +1412,12 @@ function syncDesktopState() {
   const visitorOverlay = document.querySelector("#visitor-overlay");
   const visitorContent = document.querySelector("#visitor-overlay-content");
   const arrestOverlay = document.querySelector("#arrest-overlay");
+  const endingOverlay = document.querySelector("#ending-overlay");
+  const endingType = document.querySelector("#ending-type");
+  const endingTitle = document.querySelector("#ending-title");
+  const endingSubtitle = document.querySelector("#ending-subtitle");
+  const endingCopy = document.querySelector("#ending-copy");
+  const endingStats = document.querySelector("#ending-stats");
   const tradeOverlay = document.querySelector("#trade-feedback-overlay");
   const tradeContent = document.querySelector("#trade-feedback-content");
   const guidePopup = document.querySelector("#beginner-guide");
@@ -1407,7 +1455,6 @@ function syncDesktopState() {
       Boolean(currentGuide) &&
       currentGuide.id !== "SHOP" &&
       !(state.guidePopupDismissedSteps ?? []).includes(state.guideStep);
-    guidePopup.classList.toggle("is-hidden", !shouldShow);
     if (currentGuide && shouldShow) {
       guideStep.textContent = `第 ${currentGuide.number} 步`;
       guideTitle.textContent = currentGuide.title;
@@ -1420,8 +1467,12 @@ function syncDesktopState() {
         : `<button type="button" class="legacy-button primary" data-open-app="${currentGuide.target}">${escapeHtml(
             currentGuide.buttonText
           )}</button>`;
-      positionGuidePopup(guidePopup, currentGuide);
-      guidePopup.classList.add("is-positioned");
+      const positioned = positionGuidePopup(guidePopup, currentGuide);
+      guidePopup.classList.toggle("is-positioned", positioned);
+      guidePopup.classList.toggle("is-hidden", !positioned);
+    } else {
+      guidePopup.classList.add("is-hidden");
+      guidePopup.classList.remove("is-positioned");
     }
   }
 
@@ -1436,12 +1487,17 @@ function syncDesktopState() {
     if (state.newsVisible && !state.newsRead) {
       newsSummaryVisible = true;
     }
+    const hasBuyerNotice = Boolean(
+      state.buyerChat?.unread &&
+        !state.buyerChat?.replied &&
+        dismissedBuyerId !== state.buyerChat?.id
+    );
+    if (hasBuyerNotice && newsExpanded) {
+      newsExpanded = false;
+    }
     const shouldShow = newsSummaryVisible && !newsMinimized;
     newsPopup.classList.toggle("is-hidden", !shouldShow);
-    newsPopup.classList.toggle(
-      "has-buyer-notice",
-      Boolean(state.buyerChat?.unread && !state.buyerChat?.replied)
-    );
+    newsPopup.classList.toggle("has-buyer-notice", hasBuyerNotice);
     if (shouldShow) {
       newsPopup.classList.toggle("is-expanded", newsExpanded);
       newsContent.innerHTML = newsExpanded
@@ -1514,7 +1570,9 @@ function syncDesktopState() {
   if (sleepButton) {
     sleepButton.classList.remove("is-hidden");
     sleepButton.classList.toggle("is-urgent", state.timeMinutes >= 24 * 60);
-    sleepButton.disabled = Boolean(state.loanDefaulted || state.arrested);
+    sleepButton.disabled = Boolean(
+      state.loanDefaulted || state.arrested || state.ending
+    );
   }
 
   if (summaryOverlay && summaryContent) {
@@ -1543,6 +1601,25 @@ function syncDesktopState() {
           )}</strong></div>
         </div>
         ${
+          summary.statusChanges?.length
+            ? `<div class="summary-status">
+                <strong>状态变化</strong>
+                ${summary.statusChanges
+                  .map(
+                    (change) => `
+                      <div class="summary-status-item ${getStatusChangeClass(
+                        change
+                      )}">
+                        <span>${escapeHtml(change.reason)}</span>
+                        <strong>${formatStatusChange(change)}</strong>
+                      </div>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : ""
+        }
+        ${
           summary.loanMessage
             ? `<div class="summary-loan ${summary.loanOverdue ? "is-overdue" : ""}">
                 <strong>贷款结算</strong>
@@ -1558,33 +1635,14 @@ function syncDesktopState() {
               </div>`
             : ""
         }
-        <div class="summary-activities">
-          <strong>今日活动</strong>
-          ${
-            summary.activities.length
-              ? summary.activities
-                  .map(
-                    (entry) => `
-                      <div class="summary-activity">
-                        <span>${escapeHtml(entry.label)}</span>
-                        <strong class="${
-                          entry.amount >= 0 ? "key-income" : "key-expense"
-                        }">${
-                          entry.amount > 0 ? "+" : ""
-                        }${
-                          entry.amount
-                            ? `${entry.amount < 0 ? "-" : ""}${formatCurrency(
-                                Math.abs(entry.amount)
-                              )}`
-                            : "--"
-                        }</strong>
-                      </div>
-                    `
-                  )
-                  .join("")
-              : `<p>今天没有产生交易。</p>`
-          }
-        </div>
+        ${
+          summary.contrabandMessage
+            ? `<div class="summary-contraband">
+                <strong>违禁品尾款结算</strong>
+                <span>${escapeHtml(summary.contrabandMessage)}</span>
+              </div>`
+            : ""
+        }
         <button type="button" class="legacy-button primary" data-action="close-summary">
           进入第 ${state.day} 天
         </button>
@@ -1680,21 +1738,58 @@ function syncDesktopState() {
     }
   }
 
-  if (troubleToast && troubleToastContent) {
-    const notice = state.troubleNotice;
+  if (statusToast && statusToastContent && statusToastTitle) {
+    const notice = state.statusNotice;
     const shouldShowNotice =
       Boolean(notice) &&
       !state.troublePopupOpen &&
-      !state.loanDefaulted;
-    troubleToast.classList.toggle("is-hidden", !shouldShowNotice);
+      !state.loanDefaulted &&
+      !state.summaryOpen;
+    statusToast.classList.toggle("is-hidden", !shouldShowNotice);
     if (shouldShowNotice) {
-      troubleToastContent.innerHTML = `
-        <div class="trouble-toast-value">
-          <strong>+${notice.amount}</strong>
-          <span>当前 ${notice.total} / ${CONFIG.maxTrouble}</span>
+      const changes = notice.changes?.length
+        ? notice.changes
+        : [
+            {
+              type: notice.type ?? "trouble",
+              amount: notice.amount,
+              reason: notice.reason ?? notice.label,
+              current: notice.current ?? notice.total
+            }
+          ];
+      const noticeTypes = new Set(changes.map((change) => change.type));
+      statusToast.classList.toggle(
+        "status-trouble",
+        noticeTypes.size === 1 && noticeTypes.has("trouble")
+      );
+      statusToast.classList.toggle(
+        "status-reputation",
+        noticeTypes.size === 1 && noticeTypes.has("reputation")
+      );
+      statusToast.classList.toggle("status-mixed", noticeTypes.size > 1);
+      statusToastTitle.textContent =
+        noticeTypes.size > 1
+          ? "状态变化"
+          : noticeTypes.has("reputation")
+            ? "信誉变化"
+            : "麻烦值变化";
+      statusToastContent.innerHTML = `
+        <div class="status-toast-list">
+          ${changes
+            .map(
+              (change) => `
+                <div class="status-toast-change ${getStatusChangeClass(change)}">
+                  <strong>${change.amount > 0 ? "+" : ""}${change.amount}</strong>
+                  <span>${change.type === "trouble" ? "麻烦" : "信誉"}当前 ${change.current}${
+                    change.type === "trouble" ? ` / ${CONFIG.maxTrouble}` : ""
+                  }</span>
+                </div>
+                <p>${escapeHtml(change.reason)}</p>
+              `
+            )
+            .join("")}
         </div>
-        <p>${escapeHtml(notice.label)}</p>
-        <small>可以在日历中付费处理麻烦值。</small>
+        <small>${escapeHtml(getStatusNoticeHint(notice))}</small>
       `;
     }
   }
@@ -1731,18 +1826,34 @@ function syncDesktopState() {
 
   if (threatOverlay && threatContent) {
     const threat = state.threatEvent;
-    const shouldShowThreat = Boolean(threat) && !state.loanDefaulted;
+    const shouldShowThreat =
+      Boolean(threat) && !state.loanDefaulted && !state.ending;
     threatOverlay.classList.toggle("is-hidden", !shouldShowThreat);
     if (shouldShowThreat) {
+      threatOverlay.dataset.threatType = threat.presentation ?? "message";
+      const targetText =
+        threat.target === "item"
+          ? `目标物品：${threat.targetLabel || "价值最高的物品"}`
+          : threat.target === "listing"
+            ? `目标挂单：${threat.targetLabel || "当前商品"}`
+            : `目标金额：${formatCurrency(threat.amount)}`;
       threatContent.innerHTML = `
+        <div class="threat-heading">
+          <strong>${escapeHtml(threat.title)}</strong>
+          <span>${threat.stage === 2 ? "第二次回应" : "即时处理"}</span>
+        </div>
         <p>${escapeHtml(threat.message)}</p>
-        <p>对方要求：<b class="key-expense">${formatCurrency(
-          threat.amount
-        )}</b> 或交出最值钱的物品。</p>
+        <p class="threat-target">${escapeHtml(targetText)}</p>
         <div class="action-row">
-          <button type="button" class="legacy-button" data-action="threat-return">交出物品</button>
-          <button type="button" class="legacy-button primary" data-action="threat-pay">支付封口费</button>
-          <button type="button" class="legacy-button" data-action="threat-ignore">无视威胁</button>
+          <button type="button" class="legacy-button primary" data-action="threat-choice" data-choice="comply">
+            ${escapeHtml(threat.complyLabel)}
+          </button>
+          <button type="button" class="legacy-button" data-action="threat-choice" data-choice="resist">
+            ${escapeHtml(threat.resistLabel)}
+          </button>
+          <button type="button" class="legacy-button" data-action="threat-choice" data-choice="lawyer">
+            联系律师
+          </button>
         </div>
       `;
     }
@@ -1771,6 +1882,39 @@ function syncDesktopState() {
 
   if (arrestOverlay) {
     arrestOverlay.classList.toggle("is-hidden", !state.arrested);
+  }
+
+  if (
+    endingOverlay &&
+    endingType &&
+    endingTitle &&
+    endingSubtitle &&
+    endingCopy &&
+    endingStats
+  ) {
+    const ending = state.ending;
+    endingOverlay.classList.toggle("is-hidden", !ending);
+    endingOverlay.classList.toggle(
+      "is-he",
+      ending?.type === "HE"
+    );
+    endingOverlay.classList.toggle(
+      "is-be",
+      ending?.type === "BE"
+    );
+    if (ending) {
+      endingType.textContent = ending.type;
+      endingTitle.textContent = ending.title;
+      endingSubtitle.textContent = ending.subtitle;
+      endingCopy.textContent = ending.text;
+      endingStats.innerHTML = `
+        <span>结束于第 <b>${ending.day}</b> 天</span>
+        <span>现金 <b>${formatCurrency(ending.cash)}</b></span>
+        <span>债务 <b>${formatCurrency(ending.debt)}</b></span>
+        <span>信誉 <b>${ending.reputation}</b></span>
+        <span>麻烦 <b>${ending.trouble} / ${CONFIG.maxTrouble}</b></span>
+      `;
+    }
   }
 
   if (tradeOverlay && tradeContent) {
@@ -1892,15 +2036,27 @@ function renderCalendarApp() {
   );
   const dueToday = state.day === dueDay && !overdue;
   const troubleCost = Game.getTroubleHandlingCost();
+  const trend = state.marketTrend;
   const days = ["一", "二", "三", "四", "五", "六", "日"];
   const cells = Array.from({ length: 14 }, (_, index) => {
     const day = index + 1;
+    const trendActive =
+      trend && day >= trend.startDay && day <= trend.endDay;
     return `
       <span class="calendar-day ${day === dueDay ? "is-due" : ""} ${
         overdue && day === dueDay ? "is-overdue" : ""
-      } ${day < state.day ? "is-muted" : ""}">
+      } ${day < state.day ? "is-muted" : ""} ${
+        trendActive ? "is-trend" : ""
+      }">
         ${day}
-        ${day === dueDay ? `<small>${overdue ? "已逾期" : "还款"}</small>` : ""}
+        <span class="calendar-day-labels">
+          ${day === dueDay ? `<small>${overdue ? "已逾期" : "还款"}</small>` : ""}
+          ${
+            trendActive
+              ? `<small>${escapeHtml(trend.label.slice(0, 6))}</small>`
+              : ""
+          }
+        </span>
       </span>
     `;
   }).join("");
@@ -1923,6 +2079,17 @@ function renderCalendarApp() {
         <span>${overdue ? `贷款逾期 ${state.overdueCount} 次` : dueToday ? "今日到期" : "贷款还款"}</span>
         <strong class="key-expense">${formatCurrency(state.nextPayment.amount)}</strong>
       </div>
+      ${
+        trend
+          ? `<div class="calendar-trend">
+              <strong>市场趋势 · ${escapeHtml(trend.title)}</strong>
+              <span>${escapeHtml(trend.effect)} · 剩余 ${Math.max(
+                0,
+                trend.endDay - state.day + 1
+              )} 天</span>
+            </div>`
+          : `<div class="calendar-trend is-empty">当前没有长期市场趋势。</div>`
+      }
       <div class="calendar-visitors">
         <strong>人物与到访</strong>
         ${
@@ -2247,6 +2414,33 @@ function renderShopTab(tab) {
       </aside>
       <section class="shop-content">
         ${
+          state.contrabandSales || state.contrabandPending?.length
+            ? `<div class="contraband-ledger">
+                <div>
+                  <strong>违禁品关注度 ${state.contrabandAttention} / 5</strong>
+                  <span>已成交 ${state.contrabandSales} 次，后续收益会继续递减，调查概率会上升。</span>
+                </div>
+                ${
+                  state.contrabandPending?.length
+                    ? `<div class="contraband-pending-list">
+                        ${state.contrabandPending
+                          .map(
+                            (entry) => `
+                              <span>
+                                ${escapeHtml(entry.itemName)} · 尾款 ${formatCurrency(
+                                  entry.balance
+                                )} · 第 ${entry.dueDay} 天结算
+                              </span>
+                            `
+                          )
+                          .join("")}
+                      </div>`
+                    : `<small>当前没有等待结算的尾款。</small>`
+                }
+              </div>`
+            : ""
+        }
+        ${
           state.inventory.length
             ? `<div class="inventory-grid">${state.inventory
                 .map((item, index) => renderInventoryItem(item, index))
@@ -2303,7 +2497,10 @@ function renderInventoryItem(item, index = 0) {
     <article class="inventory-card ${item.category === "special" ? "special-item" : ""}">
       ${
         item.category === "special"
-          ? `<span class="contraband-badge">违禁物品</span>`
+          ? `<span class="contraband-badge">违禁物品</span>
+             <div class="contraband-forgery-hint">
+               有买家私下提过：包装、标签和来源文件都可能是假的，平台却很难当场看穿。
+             </div>`
           : ""
       }
       <div class="inventory-card-head">
@@ -2384,7 +2581,12 @@ function renderListingEditor() {
   const selectedFakeProduct = STAGE_TWO_DATA.mallProducts.find(
     (product) => product.id === draft.fakeItemId
   );
-  const priceMultiplier = selectedFakeProduct?.priceMultiplier ?? 1;
+  const selectedForgeryTarget = STAGE_TWO_DATA.forgeryTargets.find(
+    (target) => target.id === draft.forgeryTargetId
+  );
+  const priceMultiplier =
+    (selectedFakeProduct?.priceMultiplier ?? 1) *
+    (selectedForgeryTarget?.rewardMultiplier ?? 1);
   const suggestedMin = Math.round(priceRange[0] * priceMultiplier);
   const suggestedMax = Math.round(priceRange[1] * priceMultiplier);
   const priceAboveSuggested = draft.price > suggestedMax;
@@ -2402,6 +2604,9 @@ function renderListingEditor() {
     ...STAGE_TWO_DATA.listingTags
   ]).slice(0, 8);
   const days = Array.from({ length: 6 }, (_, index) => state.day + index);
+  const publishBlocked =
+    draft.tags.length !== 2 ||
+    Boolean(selectedFakeProduct && !selectedForgeryTarget);
 
   return `
     <section class="shop-content full-span listing-editor">
@@ -2466,7 +2671,7 @@ function renderListingEditor() {
             }
           </div>
           <div class="listing-section">
-            <strong>可伪造物品</strong>
+            <strong>伪造什么</strong>
             ${
               STAGE_TWO_DATA.mallProducts.some(
                 (product) =>
@@ -2504,6 +2709,41 @@ function renderListingEditor() {
                 : `<span class="mall-empty">没有可用的伪造物品，可在万物通商城购买。</span>`
             }
           </div>
+          ${
+            selectedFakeProduct
+              ? `<div class="listing-section">
+                  <strong>卖给谁</strong>
+                  <div class="forgery-target-picker">
+                    ${STAGE_TWO_DATA.forgeryTargets
+                      .map(
+                        (target) => `
+                          <button
+                            type="button"
+                            class="forgery-target-option ${
+                              draft.forgeryTargetId === target.id
+                                ? "is-selected"
+                                : ""
+                            }"
+                            data-action="toggle-forgery-target"
+                            data-target-id="${target.id}"
+                          >
+                            <b>${escapeHtml(target.name)}</b>
+                            <span>${escapeHtml(target.description)}</span>
+                            <small>${
+                              target.compatibleTypes.includes(
+                                selectedFakeProduct.forgeryType
+                              )
+                                ? "与当前伪造方式匹配"
+                                : "匹配度较低，识破率会上升"
+                            }</small>
+                          </button>
+                        `
+                      )
+                      .join("")}
+                  </div>
+                </div>`
+              : ""
+          }
           <div class="listing-section">
             <strong>设置售价</strong>
             <div class="price-editor">
@@ -2553,8 +2793,13 @@ function renderListingEditor() {
               type="button"
               class="legacy-button primary"
               data-action="publish-listing"
-              ${draft.tags.length === 2 ? "" : "disabled"}
+              ${publishBlocked ? "disabled" : ""}
             >发布上架</button>
+            ${
+              selectedFakeProduct && !selectedForgeryTarget
+                ? `<span class="listing-verification-warning">使用伪造物前必须选择目标买家。</span>`
+                : ""
+            }
           </div>
         </div>
       </div>
@@ -2577,7 +2822,11 @@ function renderListingRow(listing) {
           listing.fakeItemName
             ? `<span class="listing-fake-note">已使用：${escapeHtml(
                 listing.fakeItemName
-              )}</span>`
+              )}${
+                listing.forgeryTargetName
+                  ? ` · 目标：${escapeHtml(listing.forgeryTargetName)}`
+                  : ""
+              }</span>`
             : ""
         }
         ${
@@ -2767,6 +3016,14 @@ function renderSearchResults() {
         ${
           result
             ? `
+              ${
+                result.classified
+                  ? `<div class="clue-search-note">
+                      <strong>受限线索</strong>
+                      <span>该条目属于私人档案，不能公开出售。搜索会逐步推进文件夹中的线索阶段。</span>
+                    </div>`
+                  : ""
+              }
               <h3>${escapeHtml(result.title)}</h3>
               <div class="search-fact"><span>价格区间</span><strong class="key-income">${formatCurrency(
                 result.priceRange[0]
@@ -2838,6 +3095,10 @@ function renderMall() {
     { id: "fake", title: "可伪造物品" }
   ];
   return `
+    <div class="forgery-play-guide">
+      <strong>伪造交易</strong>
+      <span>先购买一种伪造工具，再在上架页选择“伪造什么”和“卖给谁”。匹配的买家更容易成交，审核型买家的识破率更高。</span>
+    </div>
     <div class="mall-status">
       <span>保护服务：<b>${state.protectionCharges ?? 0}</b></span>
       <span>伪造护航：<b>${state.cleanupShield ?? 0}</b></span>
@@ -2893,7 +3154,15 @@ function renderMall() {
 
 function renderFolderApp() {
   const state = Game.getState();
-  const items = state.folder;
+  const folderView = ["clues", "mall"].includes(state.folderView)
+    ? state.folderView
+    : "archive";
+  const caseLabel = Game.getFolderCaseLabel();
+  const items = state.folder.filter((item) => {
+    if (folderView === "clues") return item.clue;
+    if (folderView === "mall") return item.acquisition === "mall";
+    return !item.clue;
+  });
   const activeCombos = Game.getCollectionComboState();
   const archetypeHint = Game.getArchetypeHint();
   const activeEffectKeys = new Set();
@@ -2912,36 +3181,66 @@ function renderFolderApp() {
     <div class="folder-shell">
       <aside class="folder-tree">
         <strong>收藏档案</strong>
-        <span class="is-selected">全部藏品</span>
-        <span>未分类</span>
+        <button
+          type="button"
+          class="${folderView === "archive" ? "is-selected" : ""}"
+          data-action="folder-view"
+          data-view="archive"
+        >全部藏品</button>
+        <button
+          type="button"
+          class="${folderView === "clues" ? "is-selected" : ""}"
+          data-action="folder-view"
+          data-view="clues"
+        >${escapeHtml(caseLabel)}</button>
+        <button
+          type="button"
+          class="${folderView === "mall" ? "is-selected" : ""}"
+          data-action="folder-view"
+          data-view="mall"
+        >商城藏品</button>
       </aside>
       <section class="folder-content">
-        <div class="folder-effect-note">
-          同类特殊效果不能叠加，每类效果只会让一件藏品生效。
-        </div>
-        <div class="folder-combo-panel">
-          <strong>收藏组合</strong>
-          ${
-            activeCombos.length
-              ? activeCombos
-                  .map(
-                    (combo) => `
-                      <span>
-                        <b class="key-income">${escapeHtml(combo.name)}</b>
-                        ${escapeHtml(combo.effect)}
-                      </span>
-                    `
-                  )
-                  .join("")
-              : `<span>还没有藏品满足组合条件。</span>`
-          }
-        </div>
         ${
-          archetypeHint
-            ? `<div class="folder-archetype-hint">
-                <strong>交易倾向</strong>
-                <span>${escapeHtml(archetypeHint)}</span>
+          folderView === "clues"
+            ? `<div class="folder-case-note">
+                <strong>${escapeHtml(caseLabel)}</strong>
+                <span>线索物品只能自留，不能上架或出售。通过万物通逐步补充资料。</span>
               </div>`
+            : ""
+        }
+        ${
+          folderView === "archive"
+            ? `
+              <div class="folder-effect-note">
+                同类特殊效果不能叠加，每类效果只会让一件藏品生效。
+              </div>
+              <div class="folder-combo-panel">
+                <strong>收藏组合</strong>
+                ${
+                  activeCombos.length
+                    ? activeCombos
+                        .map(
+                          (combo) => `
+                            <span>
+                              <b class="key-income">${escapeHtml(combo.name)}</b>
+                              ${escapeHtml(combo.effect)}
+                            </span>
+                          `
+                        )
+                        .join("")
+                    : `<span>还没有藏品满足组合条件。</span>`
+                }
+              </div>
+              ${
+                archetypeHint
+                  ? `<div class="folder-archetype-hint">
+                      <strong>交易倾向</strong>
+                      <span>${escapeHtml(archetypeHint)}</span>
+                    </div>`
+                  : ""
+              }
+            `
             : ""
         }
         ${
@@ -2956,7 +3255,11 @@ function renderFolderApp() {
                           <div class="folder-item-title">
                             <strong>${escapeHtml(item.name)}</strong>
                             ${
-                              item.effectActive
+                              item.clue
+                                ? `<span class="folder-effect-badge is-clue">${escapeHtml(
+                                    caseLabel
+                                  )}</span>`
+                                : item.effectActive
                                 ? `<span class="folder-effect-badge is-active">生效</span>`
                                 : item.effectStacked
                                   ? `<span class="folder-effect-badge">同类效果已生效</span>`
@@ -2964,7 +3267,11 @@ function renderFolderApp() {
                             }
                           </div>
                           <p>${escapeHtml(item.description ?? "")}</p>
-                          <span>${escapeHtml(item.effect ?? "自留物品")}</span>
+                          <span>${escapeHtml(
+                            item.clue
+                              ? "线索物品 · 强制自留"
+                              : item.effect ?? "自留物品"
+                          )}</span>
                         </div>
                       </article>
                     `
@@ -3124,6 +3431,74 @@ function getTroubleTone(value) {
   if (value >= 7) return "danger";
   if (value >= 4) return "warn";
   return "safe";
+}
+
+function getReputationTone(value) {
+  if (value >= 70) return "high";
+  if (value >= 35) return "medium";
+  return "low";
+}
+
+function applyStatusFlash(element, type, notice) {
+  if (!element) return;
+  const changes = Array.isArray(notice?.changes)
+    ? notice.changes.filter((change) => change.type === type)
+    : notice?.type === type
+      ? [notice]
+      : [];
+  if (!changes.length) {
+    element.classList.remove("status-flash-up", "status-flash-down");
+    delete element.dataset.flashNoticeId;
+    return;
+  }
+  const amount = changes.reduce(
+    (sum, change) => sum + Number(change.amount || 0),
+    0
+  );
+  const flashClass = amount >= 0 ? "status-flash-up" : "status-flash-down";
+  if (element.dataset.flashNoticeId === notice.id) {
+    element.classList.add(flashClass);
+    return;
+  }
+  element.classList.remove("status-flash-up", "status-flash-down");
+  element.dataset.flashNoticeId = notice.id;
+  void element.offsetWidth;
+  element.classList.add(flashClass);
+}
+
+function getStatusChangeClass(change) {
+  if (change.type === "trouble") {
+    return change.amount > 0 ? "status-worse" : "status-better";
+  }
+  return change.amount >= 0 ? "status-reputation-up" : "status-reputation-down";
+}
+
+function formatStatusChange(change) {
+  const label = change.type === "trouble" ? "麻烦" : "信誉";
+  const amount = Number(change.amount) || 0;
+  return `${label} ${amount > 0 ? "+" : ""}${amount} → ${
+    change.current
+  }${change.type === "trouble" ? ` / ${CONFIG.maxTrouble}` : ""}`;
+}
+
+function getStatusNoticeHint(notice) {
+  const changes = Array.isArray(notice?.changes)
+    ? notice.changes
+    : notice
+      ? [notice]
+      : [];
+  const troubleRose = changes.some(
+    (change) => change.type === "trouble" && change.amount > 0
+  );
+  const reputationFell = changes.some(
+    (change) => change.type === "reputation" && change.amount < 0
+  );
+  if (troubleRose && reputationFell) {
+    return "麻烦值会提高调查风险，信誉下降会影响后续买家信任。";
+  }
+  if (troubleRose) return "麻烦值越高，调查和报复风险越大。";
+  if (reputationFell) return "信誉下降会降低后续买家的初始信任。";
+  return "状态变化已经记入今日结算。";
 }
 
 function getItemStatusLabel(status) {

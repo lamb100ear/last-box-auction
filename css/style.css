@@ -448,6 +448,38 @@ input:focus-visible {
   animation: warningBlink 800ms steps(2, end) 3;
 }
 
+.reputation-high {
+  background: #d8e6ff;
+}
+
+.reputation-medium {
+  background: #e5e5e5;
+}
+
+.reputation-low {
+  background: #f0c9bd;
+}
+
+.status-pill.status-flash-up {
+  box-shadow: inset 0 0 0 3px #24713d;
+  animation: statusPillUp 700ms steps(2, end) 3;
+}
+
+.status-pill.status-flash-down {
+  box-shadow: inset 0 0 0 3px #a32121;
+  animation: statusPillDown 700ms steps(2, end) 3;
+}
+
+#taskbar-reputation-pill.status-flash-up {
+  box-shadow: inset 0 0 0 3px #234f9b;
+  animation-name: statusReputationUp;
+}
+
+#taskbar-reputation-pill.status-flash-down {
+  box-shadow: inset 0 0 0 3px #bd5a1e;
+  animation-name: statusReputationDown;
+}
+
 .key-info {
   color: #000080;
   font-weight: 700;
@@ -763,7 +795,8 @@ input:focus-visible {
 }
 
 .legacy-sidebar span,
-.folder-tree span {
+.folder-tree span,
+.folder-tree button {
   margin-bottom: 3px;
   padding: 4px 6px;
 }
@@ -772,6 +805,15 @@ input:focus-visible {
 .folder-tree .is-selected {
   color: #fff;
   background: #000080;
+}
+
+.folder-tree button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .mail-list {
@@ -849,6 +891,10 @@ input:focus-visible {
   background: #dedede;
 }
 
+.calendar-day.is-trend {
+  background: #eaf1cc;
+}
+
 .calendar-day.is-due {
   color: #fff;
   background: #000080;
@@ -859,11 +905,17 @@ input:focus-visible {
   animation: warningBlink 900ms steps(2, end) infinite;
 }
 
-.calendar-day small {
+.calendar-day-labels {
   position: absolute;
   right: 3px;
   bottom: 3px;
+  display: grid;
+  justify-items: end;
   font-size: 9px;
+}
+
+.calendar-day-labels small {
+  display: block;
 }
 
 .calendar-note {
@@ -873,6 +925,20 @@ input:focus-visible {
   align-items: center;
   border: 2px inset var(--win-gray);
   background: #fff8cf;
+}
+
+.calendar-trend {
+  display: grid;
+  padding: 9px 11px;
+  gap: 3px;
+  border-left: 5px solid #6e832e;
+  background: #eef4d8;
+}
+
+.calendar-trend.is-empty {
+  border-left-color: #888;
+  background: #eee;
+  color: #666;
 }
 
 .calendar-visitors {
@@ -1090,6 +1156,53 @@ input:focus-visible {
   }
   50% {
     background: #b32424;
+  }
+}
+
+@keyframes statusPillUp {
+  0%,
+  100% {
+    background: #d3e4d3;
+    filter: none;
+  }
+  50% {
+    background: #90c99d;
+    filter: brightness(1.08);
+  }
+}
+
+@keyframes statusPillDown {
+  0%,
+  100% {
+    background: #edc2bd;
+    filter: none;
+  }
+  50% {
+    background: #d46a5d;
+    color: #fff;
+    filter: brightness(1.08);
+  }
+}
+
+@keyframes statusReputationUp {
+  0%,
+  100% {
+    background: #d8e6ff;
+  }
+  50% {
+    background: #78a8e6;
+    color: #fff;
+  }
+}
+
+@keyframes statusReputationDown {
+  0%,
+  100% {
+    background: #f0c9bd;
+  }
+  50% {
+    background: #d6793f;
+    color: #fff;
   }
 }
 
@@ -1373,7 +1486,8 @@ input:focus-visible {
 .police-overlay,
 .threat-overlay,
 .visitor-overlay,
-.arrest-overlay {
+.arrest-overlay,
+.ending-overlay {
   position: absolute;
   z-index: 114;
   inset: 0;
@@ -1385,7 +1499,8 @@ input:focus-visible {
 .police-window,
 .threat-window,
 .visitor-window,
-.arrest-window {
+.arrest-window,
+.ending-window {
   width: min(580px, calc(100vw - 30px));
   border: 3px outset var(--win-gray);
   background: var(--win-gray);
@@ -1460,6 +1575,40 @@ input:focus-visible {
   background: #6d1647;
 }
 
+.threat-overlay[data-threat-type="alarm"] .threat-window {
+  animation: outbidFlash 700ms steps(2, end) 3;
+}
+
+.threat-overlay[data-threat-type="surveillance"] .threat-window {
+  box-shadow:
+    7px 8px 0 rgba(0, 0, 0, 0.35),
+    0 0 24px rgba(124, 175, 255, 0.65);
+}
+
+.threat-overlay[data-threat-type="glitch"] .threat-window {
+  filter: contrast(1.14);
+}
+
+.threat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.threat-heading span {
+  padding: 3px 6px;
+  color: #fff;
+  background: #6d1647;
+  font-size: 10px;
+}
+
+.threat-target {
+  padding: 7px 9px;
+  border-left: 4px solid #9a5d00;
+  background: #fff1c9;
+}
+
 #police-overlay-content,
 #threat-overlay-content,
 #visitor-overlay-content {
@@ -1477,6 +1626,58 @@ input:focus-visible {
   color: #fff;
   background: #111;
   text-align: center;
+}
+
+.ending-overlay {
+  z-index: 130;
+}
+
+.ending-window {
+  display: grid;
+  width: min(650px, calc(100vw - 30px));
+  padding: 28px;
+  gap: 12px;
+  border: 4px double #222;
+  background: #f3f3f3;
+  box-shadow: 9px 10px 0 rgba(0, 0, 0, 0.4);
+}
+
+.ending-type {
+  justify-self: start;
+  padding: 4px 12px;
+  color: #fff;
+  background: #174d91;
+  font-weight: 900;
+}
+
+.ending-overlay.is-be .ending-type {
+  background: #8e1515;
+}
+
+.ending-window h1 {
+  margin: 0;
+  font-size: clamp(26px, 5vw, 42px);
+}
+
+.ending-window > strong {
+  color: #555;
+}
+
+.ending-window > p {
+  margin: 8px 0;
+  line-height: 1.7;
+}
+
+.ending-stats {
+  display: grid;
+  padding: 10px;
+  gap: 5px;
+  border: 2px inset var(--win-gray);
+  background: #fff;
+}
+
+.ending-window > .legacy-button {
+  justify-self: start;
 }
 
 @media (max-width: 520px) {
@@ -1982,6 +2183,14 @@ input:focus-visible {
   background: #a31515;
 }
 
+.status-toast.status-reputation > header {
+  background: #174d91;
+}
+
+.status-toast.status-mixed > header {
+  background: #4b4b4b;
+}
+
 .trouble-toast > header button {
   width: 20px;
   height: 19px;
@@ -1991,32 +2200,57 @@ input:focus-visible {
   cursor: pointer;
 }
 
-#trouble-toast-content {
+#status-toast-content {
   display: grid;
   padding: 12px;
   gap: 7px;
   border: 3px inset var(--win-gray);
 }
 
-#trouble-toast-content p {
+#status-toast-content p {
   margin: 0;
   color: #7b1111;
   font-weight: 700;
 }
 
-#trouble-toast-content small {
+#status-toast-content small {
   color: #555;
 }
 
-.trouble-toast-value {
+.status-toast-list {
+  display: grid;
+  gap: 5px;
+}
+
+.status-toast-change {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
 }
 
-.trouble-toast-value strong {
+.status-toast-change strong {
   color: #a31515;
   font-size: 24px;
+}
+
+.status-toast-change.status-better strong {
+  color: #146b2e;
+}
+
+.status-toast.status-reputation {
+  background: #eef3ff;
+}
+
+.status-toast.status-reputation > #status-toast-content p {
+  color: #174d91;
+}
+
+.status-toast-change.status-reputation-up strong {
+  color: #174d91;
+}
+
+.status-toast-change.status-reputation-down strong {
+  color: #b85118;
 }
 
 .loan-default-window {
@@ -2092,6 +2326,41 @@ input:focus-visible {
   display: block;
 }
 
+.summary-status {
+  display: grid;
+  gap: 5px;
+}
+
+.summary-status-item {
+  display: flex;
+  padding: 7px 8px;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #999;
+  border-left-width: 5px;
+  background: #fff;
+}
+
+.summary-status-item.status-worse {
+  border-left-color: #a32121;
+  background: #fff0ed;
+}
+
+.summary-status-item.status-better {
+  border-left-color: #24713d;
+  background: #edf8ef;
+}
+
+.summary-status-item.status-reputation-up {
+  border-left-color: #234f9b;
+  background: #edf3ff;
+}
+
+.summary-status-item.status-reputation-down {
+  border-left-color: #bd5a1e;
+  background: #fff2e9;
+}
+
 .summary-activities {
   display: grid;
   gap: 5px;
@@ -2120,6 +2389,14 @@ input:focus-visible {
   gap: 4px;
   border-left: 5px solid #315b9a;
   background: #e9f1ff;
+}
+
+.summary-contraband {
+  display: grid;
+  padding: 10px 12px;
+  gap: 4px;
+  border-left: 5px solid #8e1515;
+  background: #ffe8e3;
 }
 
 .summary-activity {
@@ -2484,6 +2761,39 @@ input:focus-visible {
   background: #b01823;
   font-size: 11px;
   font-weight: 700;
+}
+
+.contraband-forgery-hint {
+  margin: 7px 0;
+  padding: 7px 9px;
+  border-left: 4px solid #8e1515;
+  background: #ffe8e3;
+  line-height: 1.45;
+}
+
+.contraband-ledger {
+  display: grid;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  gap: 7px;
+  border-left: 5px solid #8e1515;
+  background: #ffe8e3;
+}
+
+.contraband-ledger span,
+.contraband-ledger small {
+  display: block;
+}
+
+.contraband-pending-list {
+  display: grid;
+  gap: 4px;
+}
+
+.contraband-pending-list span {
+  padding: 5px 7px;
+  border: 1px solid #c58a82;
+  background: #fff;
 }
 
 .contraband-alert {
@@ -2955,6 +3265,12 @@ button.keyword-chip {
   background: #fff4b9;
 }
 
+.pending-sale.trust-failed {
+  border-color: #a31515;
+  background: #ffe4df;
+  color: #a31515;
+}
+
 .search-layout {
   display: grid;
   min-height: 330px;
@@ -2976,6 +3292,15 @@ button.keyword-chip {
 
 .search-results {
   background: #fff;
+}
+
+.clue-search-note {
+  display: grid;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  gap: 4px;
+  border-left: 5px solid #8d6b16;
+  background: #fff5ce;
 }
 
 .search-fact {
@@ -3126,6 +3451,15 @@ button.keyword-chip {
   background: #fff;
 }
 
+.forgery-play-guide {
+  display: grid;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  gap: 4px;
+  border-left: 5px solid #8e1515;
+  background: #ffe8e3;
+}
+
 .mall-group {
   padding: 12px;
   border: 2px outset var(--win-gray);
@@ -3200,6 +3534,32 @@ button.keyword-chip {
   font-size: 11px;
 }
 
+.forgery-target-picker {
+  display: grid;
+  margin-top: 7px;
+  gap: 6px;
+}
+
+.forgery-target-option {
+  display: grid;
+  padding: 8px 9px;
+  gap: 3px;
+  border: 2px outset var(--win-gray);
+  background: #eee;
+  text-align: left;
+  cursor: pointer;
+}
+
+.forgery-target-option.is-selected {
+  border-color: #8e1515;
+  background: #ffe8e3;
+}
+
+.forgery-target-option span,
+.forgery-target-option small {
+  color: #555;
+}
+
 .listing-fake-note {
   color: #8b3a16 !important;
   font-weight: 700;
@@ -3249,6 +3609,15 @@ button.keyword-chip {
   border-left: 5px solid #000080;
   background: #edf2ff;
   line-height: 1.5;
+}
+
+.folder-case-note {
+  display: grid;
+  margin-bottom: 11px;
+  padding: 10px 12px;
+  gap: 4px;
+  border-left: 5px solid #8d6b16;
+  background: #fff5ce;
 }
 
 .folder-combo-panel,
@@ -3306,6 +3675,17 @@ button.keyword-chip {
   border-color: #17652d;
   background: #d9efdc;
   color: #17652d;
+}
+
+.folder-effect-badge.is-clue {
+  border-color: #8d6b16;
+  background: #fff0a8;
+  color: #6e5200;
+}
+
+.folder-item:has(.folder-effect-badge.is-clue) {
+  border-color: #b3922c;
+  background: #fff9df;
 }
 
 .folder-item p {
