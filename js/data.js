@@ -3,7 +3,7 @@ export const CONFIG = {
   lotsPerDay: 2,
   maxBoxesPerRun: 10,
   startingCash: 800,
-  debtTarget: 15000,
+  debtTarget: 20000,
   maxTrouble: 10,
   quickSaleMultiplier: 0.6,
   highSaleMultiplier: 1,
@@ -11,10 +11,13 @@ export const CONFIG = {
   storageKey: "last-box-v0.5-stage-3-save",
   workingStorageKey: "last-box-v0.5-stage-3-working",
   brokerName: "黑匣信贷",
-  firstPayment: 1800,
+  firstPayment: 2000,
+  paymentIncrement: 300,
   paymentIntervalDays: 7,
+  onlineSaleReturn: 0.96,
+  onsiteSaleReturn: 0.9,
   gameMinutesPerSecond: 2.5,
-  idleReminderSeconds: 15
+  idleReminderSeconds: 10
 };
 
 export const DESKTOP_APPS = [
@@ -72,15 +75,6 @@ export const DESKTOP_APPS = [
     defaultSize: { width: 860, height: 640 },
     description: "搜索物品关键词并购买道具。"
   },
-  {
-    id: "item-detail",
-    name: "物品详情",
-    icon: "folder",
-    area: "system",
-    windowTitle: "物品详情",
-    defaultSize: { width: 720, height: 560 },
-    description: "物品资料与关键词"
-  }
 ];
 
 export const STAGE_TWO_DATA = {
@@ -838,6 +832,16 @@ export const STAGE_TWO_DATA = {
       durationRange: [4, 7]
     },
     {
+      id: "common_down",
+      title: "普通旧货需求下降",
+      label: "普通旧货跌",
+      effect: "普通物品在线成交价格降低 18%",
+      detail: "买家开始压价，库存中的普通物品更难卖出理想价格。",
+      category: "common",
+      multiplier: 0.82,
+      durationRange: [4, 7]
+    },
+    {
       id: "junk_down",
       title: "垃圾处理费用上涨",
       label: "垃圾处理贵",
@@ -929,6 +933,13 @@ export const STAGE_TWO_DATA = {
       subtitle: "麻烦值达到上限",
       text:
         "调查、威胁和报复在同一天找上门。店铺被迫停业，你留下的只有一堆无法解释的交易记录。"
+    },
+    prison: {
+      type: "BE",
+      title: "牢门在拍卖结束后关上",
+      subtitle: "违禁品交易链被查获",
+      text:
+        "尾款、聊天记录和仓库单据被拼成了完整证据链。你没能等到下一场拍卖，账户与店铺一起被查封。"
     }
   },
   riskPhrases: [

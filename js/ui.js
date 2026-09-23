@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260922-06";
-import { Game, formatCurrency } from "./game.js?v=20260922-06";
+} from "./data.js?v=20260923-07";
+import { Game, formatCurrency } from "./game.js?v=20260923-07";
 
 let root;
 let workspace;
@@ -21,6 +21,15 @@ let newsMinimized = false;
 let lastNewsId = null;
 let dismissedBuyerId = null;
 let newsExpanded = false;
+const inspectionState = {
+  itemId: null,
+  returnTab: "inventory",
+  activeTool: null,
+  researchOpen: false,
+  researchTab: "archive",
+  researchResult: null,
+  lastResult: ""
+};
 let clockTimer = null;
 let uiScreen = "MENU";
 let isPaused = false;
@@ -65,11 +74,11 @@ const GUIDE_STEPS = [
   {
     id: "SHOP",
     number: 5,
-    title: "先查看物品详情",
-    message: "打开我的店铺，点击库存物品的“查看”。详情中的黄色关键词可以打开万物通搜索。",
+    title: "进入物品检视台",
+    message: "打开我的店铺，点击库存物品的“检视”。你可以在左侧图像上清理、检查和补充标签。",
     target: "shop",
     action: "guide-view-item",
-    buttonText: "查看物品详情"
+    buttonText: "进入检视台"
   },
   {
     id: "LIST",
@@ -116,6 +125,7 @@ function renderStartScreen() {
   uiScreen = "MENU";
   isPaused = false;
   windowState.clear();
+  closeInspection();
   activeWindowId = null;
   root.innerHTML = `
     <section class="desktop menu-desktop">
@@ -167,6 +177,7 @@ function renderNicknameScreen() {
   uiScreen = "NICKNAME";
   isPaused = false;
   windowState.clear();
+  closeInspection();
   root.innerHTML = `
     <section class="desktop menu-desktop">
       <div class="desktop-wallpaper" aria-hidden="true">
@@ -376,6 +387,14 @@ function renderDesktop() {
             <strong id="taskbar-time">21:00</strong>
           </span>
           <button
+            type="button"
+            class="quick-repay-button is-hidden"
+            id="quick-repay"
+            data-action="pay-loan"
+          >
+            还款
+          </button>
+          <button
             class="sleep-button"
             id="sleep-button"
             type="button"
@@ -426,7 +445,10 @@ function renderDesktop() {
       <div class="night-overlay" id="night-overlay" aria-hidden="true"></div>
       <div class="sleep-warning is-hidden" id="sleep-warning" role="alert">
         <strong>距离强制入睡还有 60 分钟</strong>
-        <span>强制入睡可能增加麻烦值，或错过新闻和买家回复。</span>
+        <span>外面已经很晚了，建议现在休眠。强制入睡可能增加麻烦值，或错过新闻和买家回复。</span>
+        <button type="button" class="legacy-button primary" data-action="sleep">
+          立即休眠
+        </button>
       </div>
       <div class="crt-overlay" aria-hidden="true"></div>
 
@@ -600,6 +622,10 @@ function handleClick(event) {
   markUserInteraction();
   const actionButtonEarly = event.target.closest("[data-action]");
   const earlyAction = actionButtonEarly?.dataset.action;
+  const guideActionButton = event.target.closest(
+    "#beginner-guide [data-action], #beginner-guide [data-open-app]"
+  );
+  if (guideActionButton) Game.dismissCurrentGuideStep();
   if (earlyAction === "new-game") {
     Game.startNewGame();
     renderNicknameScreen();
@@ -670,7 +696,8 @@ function handleClick(event) {
     productId,
     choice,
     view,
-    targetId
+    targetId,
+    tool
   } = actionButton.dataset;
 
   if (action === "toggle-start") toggleStartMenu();
@@ -808,6 +835,55 @@ function handleClick(event) {
     Game.toggleDraftForgeryTarget(targetId);
     refreshFromState();
   }
+  if (action === "inspection-back") {
+    const returnTab = inspectionState.returnTab;
+    closeInspection();
+    Game.getState().activeShopTab = returnTab;
+    refreshFromState();
+  }
+  if (action === "inspection-tool") {
+    inspectionState.activeTool = tool;
+    refreshFromState();
+  }
+  if (action === "inspection-action") {
+    inspectionState.lastResult = Game.useInspectionAction(
+      inspectionState.itemId,
+      tool
+    );
+    refreshFromState();
+  }
+  if (action === "inspection-apply-forgery") {
+    inspectionState.lastResult = Game.useInspectionAction(
+      inspectionState.itemId,
+      "apply-forgery",
+      productId
+    );
+    inspectionState.activeTool = null;
+    refreshFromState();
+  }
+  if (action === "inspection-research-toggle") {
+    inspectionState.researchOpen = !inspectionState.researchOpen;
+    refreshFromState();
+  }
+  if (action === "inspection-research-tab") {
+    inspectionState.researchTab =
+      actionButton.dataset.tab === "mall" ? "mall" : "archive";
+    refreshFromState();
+  }
+  if (action === "inspection-open-mall") {
+    inspectionState.researchOpen = true;
+    inspectionState.researchTab = "mall";
+    refreshFromState();
+  }
+  if (action === "inspection-search-keyword") {
+    Game.searchKeyword(itemId, keyword);
+    inspectionState.researchResult = {
+      ...Game.getState().searchResult
+    };
+    inspectionState.researchOpen = true;
+    inspectionState.researchTab = "archive";
+    refreshFromState();
+  }
   if (action === "visitor-choice") {
     Game.resolveVisitor(choice);
     refreshFromState();
@@ -851,13 +927,24 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "view-item") {
-    const selectedId = Game.viewInventoryEntry(itemId);
-    if (selectedId) openApp("item-detail");
+    const item = Game.getState().inventory.find(
+      (candidate) => candidate.id === itemId
+    );
+    if (item?.type === "box") {
+      Game.viewInventoryEntry(itemId);
+      refreshFromState();
+    } else {
+    openInspection(itemId, "inventory");
     refreshFromState();
+    }
   }
   if (action === "view-listing-item") {
-    Game.viewListingItem(itemId);
-    openApp("item-detail");
+    const listing = Game.getState().listings.find(
+      (candidate) => candidate.id === itemId
+    );
+    if (listing?.itemSnapshot) {
+      openInspection(listing.itemSnapshot.id, "listings", listing.id);
+    }
     refreshFromState();
   }
   if (action === "unlist-listing") {
@@ -885,8 +972,10 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "shop-tab") {
-    Game.getState().activeShopTab = actionButton.dataset.tab;
-    if (actionButton.dataset.tab === "buyers") Game.markBuyerRead();
+    const tab = actionButton.dataset.tab;
+    if (tab !== "inventory") closeInspection();
+    Game.getState().activeShopTab = tab;
+    if (tab === "buyers") Game.markBuyerRead();
     refreshFromState();
   }
   if (action === "universal-tab") {
@@ -906,8 +995,8 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "back-shop") {
-    closeWindow("item-detail");
-    openApp("shop");
+    closeInspection();
+    refreshFromState();
   }
   if (action === "folder-view") {
     Game.setFolderView(view);
@@ -1101,6 +1190,55 @@ function performSleep() {
   refreshFromState();
 }
 
+function openInspection(itemId, returnTab = "inventory", listingId = null) {
+  if (!itemId) return;
+  Game.selectOwnedItem(itemId);
+  inspectionState.itemId = itemId;
+  inspectionState.returnTab = returnTab;
+  inspectionState.listingId = listingId;
+  inspectionState.activeTool = null;
+  inspectionState.researchOpen = false;
+  inspectionState.researchTab = "archive";
+  inspectionState.researchResult = null;
+  inspectionState.lastResult = "";
+  Game.getState().activeShopTab = "inventory";
+  if (!windowState.has("shop")) openApp("shop");
+  else focusWindow("shop");
+  expandShopForInspection();
+  windowState.get("shop")?.element.classList.add("is-inspection-mode");
+}
+
+function closeInspection() {
+  inspectionState.itemId = null;
+  inspectionState.returnTab = "inventory";
+  inspectionState.listingId = null;
+  inspectionState.activeTool = null;
+  inspectionState.researchOpen = false;
+  inspectionState.researchTab = "archive";
+  inspectionState.researchResult = null;
+  inspectionState.lastResult = "";
+  windowState
+    .get("shop")
+    ?.element.classList.remove("is-inspection-mode");
+}
+
+function expandShopForInspection() {
+  const entry = windowState.get("shop");
+  if (!entry || !workspace) return;
+  const width = Math.min(1120, Math.max(680, workspace.clientWidth - 16));
+  const height = Math.min(760, Math.max(520, workspace.clientHeight - 16));
+  entry.element.style.width = `${width}px`;
+  entry.element.style.height = `${height}px`;
+  entry.element.style.left = `${Math.max(
+    8,
+    Math.round((workspace.clientWidth - width) / 2)
+  )}px`;
+  entry.element.style.top = `${Math.max(
+    8,
+    Math.round((workspace.clientHeight - height) / 2)
+  )}px`;
+}
+
 function handleDocumentPointerDown(event) {
   if (!startMenu || startMenu.classList.contains("is-hidden")) return;
   if (event.target.closest("#start-menu") || event.target.closest("#start-button")) {
@@ -1193,6 +1331,7 @@ function beginWindowDrag(event, appId) {
     const maxTop = Math.max(0, workspace.clientHeight - Math.min(windowElement.offsetHeight, workspace.clientHeight));
     windowElement.style.left = `${clamp(startLeft + moveEvent.clientX - startX, 0, maxLeft)}px`;
     windowElement.style.top = `${clamp(startTop + moveEvent.clientY - startY, 0, maxTop)}px`;
+    positionSecondaryWindowDock();
   }
 
   function stop() {
@@ -1325,8 +1464,11 @@ function updateTaskbar() {
   if (!taskbarApps) return;
   const state = Game.getState();
   const entries = [...windowState.values()];
+  const primaryEntries = entries.filter(
+    (entry) => entry.app.area !== "system"
+  );
 
-  taskbarApps.innerHTML = entries
+  taskbarApps.innerHTML = primaryEntries
     .map(
       (entry) => `
         <button
@@ -1379,6 +1521,20 @@ function updateTaskbar() {
   }
   applyStatusFlash(troublePill, "trouble", state.statusNotice);
   applyStatusFlash(reputationPill, "reputation", state.statusNotice);
+
+  const paymentAmount = Math.min(
+    state.nextPayment?.amount ?? 0,
+    state.totalDebt
+  );
+  const loanReady =
+    !state.ending &&
+    !state.loanDefaulted &&
+    state.totalDebt > 0 &&
+    state.day >= state.nextPayment.dueDay &&
+    state.cash >= paymentAmount;
+  document
+    .querySelector("#quick-repay")
+    ?.classList.toggle("is-hidden", !loanReady);
 }
 
 function syncDesktopState() {
@@ -1454,6 +1610,8 @@ function syncDesktopState() {
     const shouldShow =
       Boolean(currentGuide) &&
       currentGuide.id !== "SHOP" &&
+      (currentGuide.id !== "LIST" ||
+        state.listingDraft?.tags?.length === 2) &&
       !(state.guidePopupDismissedSteps ?? []).includes(state.guideStep);
     if (currentGuide && shouldShow) {
       guideStep.textContent = `第 ${currentGuide.number} 步`;
@@ -1555,7 +1713,8 @@ function syncDesktopState() {
   }
 
   if (sleepWarning) {
-    const shouldWarn = state.timeMinutes >= 24 * 60 && state.guideStep !== "DONE";
+    const shouldWarn =
+      state.timeMinutes >= 24 * 60 && !state.ending && !state.loanDefaulted;
     sleepWarning.classList.toggle("is-hidden", !shouldWarn);
     if (shouldWarn) {
       const remaining = Math.max(
@@ -1563,7 +1722,12 @@ function syncDesktopState() {
         Math.ceil(60 - (state.timeMinutes - 24 * 60))
       );
       const title = sleepWarning.querySelector("strong");
-      if (title) title.textContent = `距离强制入睡还有 ${remaining} 分钟`;
+      if (title) {
+        title.textContent =
+          remaining > 0
+            ? `已经到午夜，${remaining} 分钟后将强制休眠`
+            : "现在必须休眠";
+      }
     }
   }
 
@@ -1977,15 +2141,10 @@ function renderAppContent(appId) {
   if (appId === "shop") return renderShopApp();
   if (appId === "folder") return renderFolderApp();
   if (appId === "universal") return renderUniversalApp();
-  if (appId === "item-detail") return renderItemDetailApp();
   return `<div class="empty-panel">没有可显示的内容。</div>`;
 }
 
 function getWindowTitle(appId) {
-  if (appId === "item-detail") {
-    const item = getSelectedItem();
-    return item ? item.name : "物品详情";
-  }
   return DESKTOP_APPS.find((app) => app.id === appId)?.windowTitle ?? "窗口";
 }
 
@@ -2372,6 +2531,9 @@ function renderAuctionApp() {
 function renderShopApp() {
   const state = Game.getState();
   const activeTab = state.activeShopTab ?? "inventory";
+  const inspectionItem = inspectionState.itemId
+    ? findItemForInspection(inspectionState.itemId)
+    : null;
   const tabs = [
     ["inventory", "库存"],
     ["listings", "上架中"],
@@ -2397,7 +2559,13 @@ function renderShopApp() {
         )
         .join("")}
     </div>
-    <div class="shop-shell">${renderShopTab(activeTab)}</div>
+    <div class="shop-shell">
+      ${
+        activeTab === "inventory" && inspectionItem
+          ? renderInspectionWorkspace(inspectionItem)
+          : renderShopTab(activeTab)
+      }
+    </div>
   `;
 }
 
@@ -2481,8 +2649,635 @@ function renderShopTab(tab) {
 
   return `
     <section class="shop-content full-span buyer-panel">
-      ${state.buyerChat ? renderBuyerChat(state.buyerChat) : `<div class="empty-panel">还没有买家私信</div>`}
+      ${
+        state.buyerChat
+          ? renderBuyerWorkspace(state.buyerChat)
+          : `<div class="empty-panel">还没有买家私信</div>`
+      }
     </section>
+  `;
+}
+
+function findItemForInspection(itemId) {
+  const state = Game.getState();
+  return (
+    state.inventory.find((item) => item.id === itemId) ??
+    state.folder.find((item) => item.id === itemId) ??
+    state.listings.find(
+      (listing) => listing.itemSnapshot?.id === itemId
+    )?.itemSnapshot ??
+    null
+  );
+}
+
+function getItemVisualProfile(item) {
+  const key = `${item?.templateId ?? ""} ${item?.name ?? ""}`.toLowerCase();
+  const exactProfiles = {
+    stage2_silver_ring: "ring",
+    wedding_rings: "ring",
+    bridal_jewelry: "ring",
+    silver_flask: "flask",
+    perfume_bottle: "bottle",
+    sealed_vials: "bottle",
+    medicine_case: "bottle",
+    gold_watch: "watch",
+    starter_watch: "watch",
+    brass_compass: "compass",
+    antique_tea_set: "tea",
+    small_painting: "painting",
+    old_stethoscope: "stethoscope",
+    old_scissors: "scissors",
+    clinic_sign: "sign",
+    designer_bag: "bag",
+    backup_phone: "phone",
+    compact_camera: "camera",
+    portable_camera: "camera",
+    instant_camera: "camera",
+    fashion_catalog: "paper",
+    endorsement_contract: "paper",
+    stock_documents: "paper",
+    old_will: "paper",
+    anonymous_records: "paper",
+    field_notebook: "paper",
+    stone_rubbing: "paper",
+    love_letter: "paper",
+    postcards: "paper",
+    guide_book: "paper",
+    ring_light: "lamp",
+    starter_lamp: "lamp",
+    starter_radio: "radio",
+    starter_box: "toolbox",
+    starter_camera: "camera"
+  };
+  if (exactProfiles[item?.templateId]) {
+    return exactProfiles[item.templateId];
+  }
+  if (item?.type === "box" || /戒指|对戒/.test(key)) {
+    return /戒指|对戒/.test(key) ? "ring" : "case";
+  }
+  if (/酒壶|酒瓶|flask/.test(key)) return "flask";
+  if (/腕表|金表|watch/.test(key)) return "watch";
+  if (/罗盘|compass/.test(key)) return "compass";
+  if (/茶具|茶壶|tea/.test(key)) return "tea";
+  if (/画|painting/.test(key)) return "painting";
+  if (/听诊器|stethoscope/.test(key)) return "stethoscope";
+  if (/剪刀|scissors/.test(key)) return "scissors";
+  if (/铭牌|sign/.test(key)) return "sign";
+  if (/包|bag/.test(key)) return "bag";
+  if (/手机|phone/.test(key)) return "phone";
+  if (/相机|camera/.test(key)) return "camera";
+  if (/台灯|补光灯|灯|lamp/.test(key)) return "lamp";
+  if (/收音机|radio/.test(key)) return "radio";
+  if (/工具箱|维修|tool/.test(key)) return "toolbox";
+  if (/书|账本|文件|合同|信|纸|card|book/.test(key)) return "paper";
+  if (/药|瓶|香水|bottle/.test(key)) return "bottle";
+  if (item?.category === "luxury") return "luxury";
+  return "generic";
+}
+
+function renderPixelArtwork(item, profile) {
+  const hash = [...String(item?.templateId ?? item?.name ?? profile)].reduce(
+    (total, character) => total + character.charCodeAt(0),
+    0
+  );
+  const accents = [
+    "#c99d52",
+    "#6f9da0",
+    "#9c6b5d",
+    "#7d8b6a",
+    "#8d7ca8",
+    "#b46f76"
+  ];
+  const accent = accents[hash % accents.length];
+  const main = {
+    ring: "#d8d8c7",
+    flask: "#c7c9bf",
+    watch: "#d6bd62",
+    camera: "#555d66",
+    paper: "#f0e2b5",
+    bottle: accent,
+    compass: "#c99d52",
+    tea: "#d0d8cf",
+    painting: "#8a6842",
+    stethoscope: "#9ea6a8",
+    scissors: "#b9c1c7",
+    sign: "#b88b42",
+    bag: "#7d3d4f",
+    phone: "#2f353c",
+    radio: "#74523c",
+    lamp: "#d1a24d",
+    toolbox: "#8b5c35",
+    case: "#8c7048",
+    luxury: accent,
+    jewelry: "#d8d8c7",
+    appliance: "#795844",
+    generic: accent
+  }[profile] ?? accent;
+  const outline = "#2b2b2b";
+  const shadow = "#6d665b";
+  const white = "#eef1e5";
+  const artworks = {
+    ring: `
+      <rect x="48" y="28" width="64" height="16" fill="${white}"/>
+      <rect x="40" y="40" width="16" height="16" fill="${white}"/>
+      <rect x="104" y="40" width="16" height="16" fill="${white}"/>
+      <rect x="40" y="56" width="80" height="16" fill="${white}"/>
+      <rect x="40" y="72" width="16" height="28" fill="${white}"/>
+      <rect x="104" y="72" width="16" height="28" fill="${white}"/>
+      <rect x="56" y="96" width="48" height="16" fill="${white}"/>
+      <path d="M72 18 L88 34 L72 50 L56 34 Z" fill="#c8efff" stroke="${outline}" stroke-width="4"/>
+    `,
+    flask: `
+      <rect x="64" y="12" width="32" height="22" fill="${shadow}" stroke="${outline}" stroke-width="4"/>
+      <rect x="50" y="34" width="60" height="90" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <rect x="58" y="56" width="44" height="14" fill="#e5e2c9"/>
+      <rect x="58" y="86" width="30" height="8" fill="#87908b"/>
+    `,
+    watch: `
+      <rect x="68" y="10" width="24" height="28" fill="#624735"/>
+      <rect x="68" y="94" width="24" height="32" fill="#624735"/>
+      <rect x="52" y="34" width="56" height="62" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="62" y="44" width="36" height="42" fill="${white}"/>
+      <rect x="79" y="52" width="4" height="20" fill="#242424"/>
+      <rect x="78" y="68" width="18" height="4" fill="#242424"/>
+    `,
+    camera: `
+      <rect x="30" y="42" width="100" height="66" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="62" y="28" width="36" height="18" fill="#363c43" stroke="${outline}" stroke-width="4"/>
+      <rect x="58" y="52" width="44" height="44" fill="#18232e" stroke="${outline}" stroke-width="4"/>
+      <rect x="70" y="64" width="20" height="20" fill="#6fa5b2"/>
+      <rect x="116" y="52" width="12" height="8" fill="#d8d16c"/>
+    `,
+    paper: `
+      <rect x="42" y="20" width="76" height="102" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <rect x="54" y="40" width="50" height="6" fill="#806d4d"/>
+      <rect x="54" y="58" width="44" height="5" fill="#806d4d"/>
+      <rect x="54" y="74" width="52" height="5" fill="#806d4d"/>
+      <rect x="54" y="90" width="36" height="5" fill="#806d4d"/>
+      <rect x="92" y="94" width="18" height="18" fill="#b44c45"/>
+    `,
+    bottle: `
+      <rect x="68" y="12" width="24" height="20" fill="${shadow}" stroke="${outline}" stroke-width="4"/>
+      <rect x="56" y="30" width="48" height="94" rx="10" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <rect x="68" y="62" width="24" height="34" fill="#d9efe7"/>
+    `,
+    compass: `
+      <rect x="34" y="34" width="92" height="72" fill="${main}" stroke="${outline}" stroke-width="6"/>
+      <rect x="44" y="44" width="72" height="52" fill="#efe7ce"/>
+      <path d="M80 50 L94 92 L80 82 L66 92 Z" fill="#a31515" stroke="${outline}" stroke-width="3"/>
+      <rect x="76" y="46" width="8" height="8" fill="#242424"/>
+    `,
+    tea: `
+      <rect x="34" y="56" width="72" height="46" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="104" y="68" width="22" height="26" fill="none" stroke="${outline}" stroke-width="7"/>
+      <rect x="24" y="102" width="112" height="12" fill="${shadow}" stroke="${outline}" stroke-width="4"/>
+      <rect x="28" y="40" width="84" height="8" fill="#8fb1a8"/>
+    `,
+    painting: `
+      <rect x="24" y="16" width="112" height="108" fill="${main}" stroke="${outline}" stroke-width="7"/>
+      <rect x="38" y="30" width="84" height="80" fill="#8fb0aa"/>
+      <rect x="38" y="72" width="84" height="38" fill="#e5bd70"/>
+      <path d="M54 62 L74 38 L94 62 L108 50 L108 98 L38 98 L38 78 Z" fill="#647b6d"/>
+    `,
+    stethoscope: `
+      <path d="M54 20 V62 Q54 92 80 92 Q106 92 106 62 V20" fill="none" stroke="${outline}" stroke-width="10"/>
+      <path d="M54 20 V62 Q54 92 80 92 Q106 92 106 62 V20" fill="none" stroke="${main}" stroke-width="5"/>
+      <rect x="96" y="76" width="30" height="30" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="104" y="84" width="14" height="14" fill="#b9d3d2"/>
+    `,
+    scissors: `
+      <path d="M62 20 L86 78 L74 84 L54 30 Z" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <path d="M98 20 L74 78 L86 84 L106 30 Z" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <rect x="52" y="84" width="26" height="26" rx="12" fill="none" stroke="${outline}" stroke-width="8"/>
+      <rect x="82" y="84" width="26" height="26" rx="12" fill="none" stroke="${outline}" stroke-width="8"/>
+    `,
+    sign: `
+      <rect x="30" y="34" width="100" height="64" fill="${main}" stroke="${outline}" stroke-width="6"/>
+      <rect x="44" y="52" width="72" height="7" fill="#554224"/>
+      <rect x="44" y="70" width="56" height="7" fill="#554224"/>
+      <rect x="74" y="98" width="12" height="26" fill="${shadow}"/>
+    `,
+    bag: `
+      <path d="M46 48 V38 Q46 18 80 18 Q114 18 114 38 V48" fill="none" stroke="${outline}" stroke-width="8"/>
+      <rect x="34" y="44" width="92" height="76" rx="8" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="72" y="66" width="16" height="10" fill="#d7b265"/>
+    `,
+    phone: `
+      <rect x="50" y="10" width="60" height="120" rx="14" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="58" y="24" width="44" height="88" fill="#7fa8aa"/>
+      <rect x="72" y="118" width="16" height="5" fill="#b9c1c7"/>
+    `,
+    radio: `
+      <rect x="24" y="38" width="112" height="76" rx="8" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="38" y="52" width="42" height="18" fill="#d7c89f"/>
+      <rect x="92" y="52" width="30" height="30" rx="15" fill="#d7c89f" stroke="${outline}" stroke-width="4"/>
+      <rect x="40" y="82" width="38" height="12" fill="#d7c89f"/>
+    `,
+    lamp: `
+      <path d="M46 58 L114 58 L100 22 L60 22 Z" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="74" y="58" width="12" height="50" fill="${shadow}"/>
+      <rect x="42" y="104" width="76" height="14" fill="${shadow}" stroke="${outline}" stroke-width="4"/>
+      <rect x="56" y="42" width="48" height="8" fill="#fff0a8"/>
+    `,
+    toolbox: `
+      <rect x="28" y="52" width="104" height="66" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="62" y="30" width="36" height="22" fill="none" stroke="${outline}" stroke-width="7"/>
+      <rect x="72" y="74" width="16" height="18" fill="#d2b36b"/>
+    `,
+    case: `
+      <rect x="28" y="46" width="104" height="72" rx="7" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="62" y="24" width="36" height="22" fill="none" stroke="${outline}" stroke-width="7"/>
+      <rect x="72" y="72" width="16" height="14" fill="#d2b36b"/>
+    `,
+    generic: `
+      <rect x="38" y="32" width="84" height="82" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="62" y="54" width="36" height="30" fill="#e2d4a6"/>
+    `,
+    jewelry: `
+      <path d="M80 22 L106 52 L80 48 L54 52 Z" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <rect x="42" y="58" width="76" height="52" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <rect x="68" y="72" width="24" height="20" fill="#f1e6a7"/>
+    `,
+    appliance: `
+      <rect x="32" y="26" width="96" height="90" fill="${main}" stroke="${outline}" stroke-width="6"/>
+      <rect x="62" y="48" width="36" height="34" fill="#d7c89f"/>
+      <rect x="72" y="58" width="16" height="14" fill="#4d5c58"/>
+    `,
+    luxury: `
+      <path d="M80 20 L128 80 L80 120 L32 80 Z" fill="${main}" stroke="${outline}" stroke-width="5"/>
+      <path d="M80 42 L105 80 L80 98 L55 80 Z" fill="#e2cf84"/>
+    `
+  };
+  return `
+    <svg
+      viewBox="0 0 160 140"
+      shape-rendering="crispEdges"
+      role="img"
+      aria-label="${escapeHtml(item?.name ?? "物品")}"
+    >
+      <rect x="24" y="112" width="112" height="12" fill="${shadow}" opacity="0.42"/>
+      <g filter="drop-shadow(4px 4px 0 ${shadow})">
+        ${artworks[profile] ?? artworks.generic}
+      </g>
+    </svg>
+  `;
+}
+
+function renderItemVisual(item, options = {}) {
+  const inspection = item?.inspection ?? {};
+  const profile = getItemVisualProfile(item);
+  const cleanLevel = Number(inspection.cleanLevel) || 0;
+  const compact = options.compact === true;
+  const interactive = options.interactive !== false;
+  const detailComplete =
+    Array.isArray(item?.facts) &&
+    item.facts.length > 0 &&
+    item.facts.every((fact) => fact.discovered);
+  return `
+    <div class="item-visual item-visual-${profile} ${
+      compact ? "is-compact" : ""
+    }">
+      <div class="item-art" aria-hidden="true">
+        ${renderPixelArtwork(item, profile)}
+      </div>
+      <div
+        class="item-dirt-layer"
+        style="opacity:${Math.max(
+          0,
+          0.82 - Math.min(3, cleanLevel) * 0.27
+        )}"
+        aria-hidden="true"
+      ></div>
+      <div
+        class="inspection-hotspot hotspot-clean ${
+          cleanLevel >= 4 ? "is-done" : ""
+        }"
+        ${
+          interactive && cleanLevel < 4
+            ? 'data-action="inspection-action" data-tool="clean"'
+            : ""
+        }
+      >
+        <span>${cleanLevel ? "继续清理" : "表面污渍"}</span>
+      </div>
+      <div
+        class="inspection-hotspot hotspot-label ${
+          inspection.labelChecked ? "is-done" : ""
+        }"
+        ${
+          interactive && !inspection.labelChecked
+            ? 'data-action="inspection-action" data-tool="label-check"'
+            : ""
+        }
+      >
+        <span>${inspection.labelChecked ? "标签已检查" : "标签残留"}</span>
+      </div>
+      <div
+        class="inspection-hotspot hotspot-detail ${
+          detailComplete ? "is-done" : ""
+        }"
+        ${
+          interactive && !detailComplete
+            ? 'data-action="inspection-action" data-tool="detail"'
+            : ""
+        }
+      >
+        <span>${detailComplete ? "细节已检查" : "细节检查"}</span>
+      </div>
+      ${
+        inspection.appliedForgery
+          ? `<div class="item-forge-layer">
+              <span>${escapeHtml(inspection.appliedForgery.name)}</span>
+            </div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderInspectionWorkspace(item) {
+  const inspection = item.inspection ?? {};
+  const discoveredFacts = (item.facts ?? []).filter(
+    (fact) => fact.discovered
+  );
+  const availableFakeItems = STAGE_TWO_DATA.mallProducts.filter(
+    (product) =>
+      product.type === "fake" &&
+      (Game.getState().fakeItems?.[product.id] ?? 0) > 0
+  );
+  const displayedFakeItems =
+    inspectionState.activeTool === "label-fill"
+      ? availableFakeItems.filter(
+          (product) => product.forgeryType === "label"
+        )
+      : availableFakeItems;
+  return `
+    <section class="inspection-workspace">
+      <header class="inspection-header">
+        <button type="button" class="legacy-button" data-action="inspection-back">返回</button>
+        <div>
+          <p class="eyebrow">物品检视台</p>
+          <h2>${escapeHtml(item.name)}</h2>
+        </div>
+        <span>${inspection.damaged ? "表面有损伤" : "状态可继续检视"}</span>
+      </header>
+      <div class="inspection-main">
+        <section class="inspection-stage">
+          ${renderItemVisual(item)}
+          <div class="inspection-stage-caption">
+            <span>点击高亮区域使用对应工具</span>
+            <strong>清洁进度 ${inspection.cleanLevel ?? 0} / 3</strong>
+          </div>
+        </section>
+        <aside class="inspection-sidebar">
+          <div class="inspection-tools">
+            <strong>工具</strong>
+            <button type="button" class="legacy-button" data-action="inspection-tool" data-tool="label-fill">补充标签</button>
+            <button type="button" class="legacy-button" data-action="inspection-tool" data-tool="forge">使用伪造物</button>
+          </div>
+          ${
+            ["label-fill", "forge"].includes(inspectionState.activeTool)
+              ? `<div class="inspection-forge-list">
+                  <strong>${
+                    inspectionState.activeTool === "label-fill"
+                      ? "选择标签材料"
+                      : "选择伪造物"
+                  }</strong>
+                  ${
+                    displayedFakeItems.length
+                      ? displayedFakeItems
+                          .map(
+                            (product) => `
+                              <button
+                                type="button"
+                                class="legacy-button"
+                                data-action="inspection-apply-forgery"
+                                data-product-id="${product.id}"
+                              >
+                                ${escapeHtml(product.name)} × ${
+                                  Game.getState().fakeItems[product.id]
+                                }
+                              </button>
+                            `
+                          )
+                          .join("")
+                      : `<span class="muted-copy">无库存伪造物。</span>
+                         <button type="button" class="legacy-button" data-action="inspection-open-mall">前往商城购买</button>`
+                  }
+                </div>`
+              : ""
+          }
+          <div class="inspection-facts">
+            <strong>已发现问题</strong>
+            ${
+              discoveredFacts.length
+                ? discoveredFacts
+                    .map(
+                      (fact) => `
+                        <span>
+                          ${escapeHtml(fact.label)}：
+                          <b>${escapeHtml(fact.value)}</b>
+                        </span>
+                      `
+                    )
+                    .join("")
+                : `<span class="muted-copy">还没有确认信息。</span>`
+            }
+          </div>
+          <div class="inspection-result">
+            <strong>处理结果</strong>
+            <span>${escapeHtml(
+              inspection.lastResult || "选择一个工具开始检查。"
+            )}</span>
+          </div>
+          <button
+            type="button"
+            class="legacy-button primary"
+            data-action="inspection-research-toggle"
+          >
+            ${inspectionState.researchOpen ? "收起万物通参考" : "打开万物通参考"}
+          </button>
+        </aside>
+        ${
+          inspectionState.researchOpen
+            ? renderInspectionResearchDrawer(item)
+            : ""
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderInspectionResearchDrawer(item) {
+  const state = Game.getState();
+  const result = inspectionState.researchResult;
+  const category = CATEGORY_INFO[item.category]?.name ?? "未知类别";
+  const priceMultiplier = Game.getSalePriceMultiplier(item);
+  const lowPrice = Math.round(item.baseValue * 0.62 * priceMultiplier);
+  const highPrice = Math.round(item.baseValue * 1.1 * priceMultiplier);
+  const trendText = state.marketTrend
+    ? `${state.marketTrend.label} · ${state.marketTrend.effect}`
+    : "当前没有长期市场趋势";
+  return `
+    <aside class="inspection-research">
+      <header>
+        <strong>万物通参考</strong>
+        <button type="button" class="legacy-button" data-action="inspection-research-toggle">×</button>
+      </header>
+      <div class="inspection-research-tabs">
+        <button type="button" class="${inspectionState.researchTab === "archive" ? "is-active" : ""}" data-action="inspection-research-tab" data-tab="archive">资料</button>
+        <button type="button" class="${inspectionState.researchTab === "mall" ? "is-active" : ""}" data-action="inspection-research-tab" data-tab="mall">商城</button>
+      </div>
+      <div class="inspection-research-content">
+        ${
+          inspectionState.researchTab === "mall"
+            ? renderMall()
+            : `
+              <div class="inspection-auto-reference">
+                <div>
+                  <span>物品类别</span>
+                  <strong>${escapeHtml(category)}</strong>
+                </div>
+                <div>
+                  <span>同类参考价</span>
+                  <strong>${formatCurrency(lowPrice)} - ${formatCurrency(
+                    highPrice
+                  )}</strong>
+                </div>
+                <div>
+                  <span>市场趋势</span>
+                  <strong>${escapeHtml(trendText)}</strong>
+                </div>
+                <div>
+                  <span>标签状态</span>
+                  <strong>${
+                    item.tagConfidence === "high"
+                      ? "完整"
+                      : item.tagConfidence === "low"
+                        ? "可疑"
+                        : "部分损坏"
+                  }</strong>
+                </div>
+              </div>
+              <small class="reference-completeness-title">可核对关键词</small>
+              <div class="inspection-keywords">
+                ${(item.keywords ?? [])
+                  .map(
+                    (keyword) => `
+                      <button
+                        type="button"
+                        class="keyword-chip is-searchable"
+                        data-action="inspection-search-keyword"
+                        data-item-id="${item.id}"
+                        data-keyword="${escapeHtml(keyword)}"
+                      >${escapeHtml(keyword)}</button>
+                    `
+                  )
+                  .join("")}
+              </div>
+              ${
+                result
+                  ? `<div class="inspection-research-result">
+                      <strong>${escapeHtml(result.title)}</strong>
+                      <p>${escapeHtml(result.demand)}</p>
+                      <p>${escapeHtml(result.risk)}</p>
+                    </div>`
+                  : `<span class="muted-copy">点击关键词可以补充更具体的核对资料。</span>`
+              }
+            `
+        }
+      </div>
+    </aside>
+  `;
+}
+
+function renderTradeItemInfo(chat) {
+  const state = Game.getState();
+  const listing = state.listings.find(
+    (candidate) => candidate.id === chat.listingId
+  );
+  const item = listing?.itemSnapshot;
+  if (!item) {
+    return `<div class="empty-panel">当前没有可查看的物品。</div>`;
+  }
+  const discoveredFacts = (item.facts ?? []).filter(
+    (fact) => fact.discovered
+  );
+  const cost = Math.max(0, Number(listing.costBasis ?? item.acquisitionCost) || 0);
+  const estimatedNet = calculateBuyerEstimate(listing, item);
+  const profit = estimatedNet - cost;
+  const questionKind =
+    chat.buyer?.questions?.[chat.questionIndex]?.kind ?? "";
+  return `
+    <section class="trade-item-info">
+      <header>
+        <p class="eyebrow">买家咨询物品</p>
+        <h3>${escapeHtml(item.name)}</h3>
+      </header>
+      ${renderItemVisual(item, { compact: true, interactive: false })}
+      <div class="trade-item-economy">
+        <span>买入价 <b>${formatCurrency(cost)}</b></span>
+        <span>当前标价 <b>${formatCurrency(listing.price)}</b></span>
+        <span>预计到手 <b>${formatCurrency(estimatedNet)}</b></span>
+        <strong class="${profit >= 0 ? "key-income" : "key-expense"}">
+          预计${profit >= 0 ? "利润" : "亏损"} ${formatCurrency(
+            Math.abs(profit)
+          )}
+        </strong>
+      </div>
+      <div class="trade-item-facts">
+        <strong>已确认信息</strong>
+        ${
+          discoveredFacts.length
+            ? discoveredFacts
+                .map(
+                  (fact) => `
+                    <span class="${
+                      questionKind === fact.kind ? "is-highlighted" : ""
+                    }">
+                      ${escapeHtml(fact.label)}：
+                      <b>${escapeHtml(fact.value)}</b>
+                    </span>
+                  `
+                )
+                .join("")
+            : `<span class="muted-copy">尚未确认任何资料。</span>`
+        }
+      </div>
+      <div class="trade-item-risk">
+        <strong>交易提示</strong>
+        <span>标签可信度：${escapeHtml(
+          item.tagConfidence === "high"
+            ? "完整"
+            : item.tagConfidence === "low"
+              ? "可疑"
+              : "部分损坏"
+        )}</span>
+        ${
+          item.inspection?.appliedForgery
+            ? `<span class="key-alert">已应用${escapeHtml(
+                item.inspection.appliedForgery.name
+              )}</span>`
+            : ""
+        }
+      </div>
+    </section>
+  `;
+}
+
+function calculateBuyerEstimate(listing, item) {
+  const multiplier = Game.getSalePriceMultiplier(item);
+  return Math.max(0, Math.round(listing.price * multiplier * 0.9));
+}
+
+function renderBuyerWorkspace(chat) {
+  return `
+    <div class="buyer-workspace">
+      ${renderTradeItemInfo(chat)}
+      <section class="buyer-workspace-chat">
+        ${renderBuyerChat(chat, true)}
+      </section>
+    </div>
   `;
 }
 
@@ -2521,10 +3316,26 @@ function renderInventoryItem(item, index = 0) {
                  .join("")}
              </div>
              ${
+               item.acquisitionCost > 0
+                 ? `<div class="item-cost-line">
+                     买入价：<strong>${formatCurrency(
+                       item.acquisitionCost
+                     )}</strong>
+                     <span>参考售价 ${formatCurrency(
+                       Math.round(
+                         item.baseValue *
+                           Game.getSalePriceMultiplier(item) *
+                           0.8
+                       )
+                     )}</span>
+                   </div>`
+                 : ""
+             }
+             ${
                item.effect
                  ? `<div class="item-effect-badge"><span>特殊效果</span><strong>${escapeHtml(
                      item.effect
-                   )}</strong></div>`
+                   )}</strong><small>点击“自留”后会进入文件夹并长期生效。</small></div>`
                  : ""
              }`
       }
@@ -2533,7 +3344,7 @@ function renderInventoryItem(item, index = 0) {
           <button type="button" class="legacy-button ${
             showViewGuide ? "is-guided" : ""
           }" data-action="view-item" data-item-id="${item.id}">
-            ${isBox ? "打开" : "查看"}
+            ${isBox ? "打开" : "检视"}
           </button>
           ${
             showViewGuide
@@ -2572,12 +3383,16 @@ function renderListingEditor() {
   const state = Game.getState();
   const draft = state.listingDraft;
   const item = state.inventory.find((candidate) => candidate.id === draft.itemId);
-  const priceRange = state.searchResult?.itemId === item?.id
+  const basePriceRange = state.searchResult?.itemId === item?.id
     ? state.searchResult.priceRange
     : [
-        Math.round((item?.baseValue ?? 100) * 0.5),
-        Math.round((item?.baseValue ?? 100) * 1.6)
+        Math.round((item?.baseValue ?? 100) * 0.62),
+        Math.round((item?.baseValue ?? 100) * 1.12)
       ];
+  const salePriceMultiplier = Game.getSalePriceMultiplier(item);
+  const priceRange = basePriceRange.map((price) =>
+    Math.round(price * salePriceMultiplier)
+  );
   const selectedFakeProduct = STAGE_TWO_DATA.mallProducts.find(
     (product) => product.id === draft.fakeItemId
   );
@@ -2591,7 +3406,7 @@ function renderListingEditor() {
   const suggestedMax = Math.round(priceRange[1] * priceMultiplier);
   const priceAboveSuggested = draft.price > suggestedMax;
   const minPrice = suggestedMin;
-  const maxPrice = Math.round(suggestedMax * 1.6);
+  const maxPrice = Math.round(suggestedMax * 1.25);
   const researchedTags = new Set(item?.unlockedTags ?? []);
   const baseTags = new Set(["旧物", "来源不明"]);
   const tagsVerified = draft.tags.every(
@@ -2671,42 +3486,14 @@ function renderListingEditor() {
             }
           </div>
           <div class="listing-section">
-            <strong>伪造什么</strong>
+            <strong>伪造处理</strong>
             ${
-              STAGE_TWO_DATA.mallProducts.some(
-                (product) =>
-                  product.type === "fake" &&
-                  (state.fakeItems?.[product.id] ?? 0) > 0
-              )
-                ? `<div class="fake-picker">
-                    ${STAGE_TWO_DATA.mallProducts
-                      .filter(
-                        (product) =>
-                          product.type === "fake" &&
-                          (state.fakeItems?.[product.id] ?? 0) > 0
-                      )
-                      .map(
-                        (product) => `
-                          <button
-                            type="button"
-                            class="fake-option ${
-                              draft.fakeItemId === product.id
-                                ? "is-selected"
-                                : ""
-                            }"
-                            data-action="toggle-draft-fake"
-                            data-product-id="${product.id}"
-                          >
-                            <b>${escapeHtml(product.name)} × ${
-                              state.fakeItems[product.id]
-                            }</b>
-                            <span>${escapeHtml(product.effect)}</span>
-                          </button>
-                        `
-                      )
-                      .join("")}
+              selectedFakeProduct
+                ? `<div class="applied-forgery-note">
+                    <b>已应用：${escapeHtml(selectedFakeProduct.name)}</b>
+                    <span>${escapeHtml(selectedFakeProduct.effect)}</span>
                   </div>`
-                : `<span class="mall-empty">没有可用的伪造物品，可在万物通商城购买。</span>`
+                : `<span class="mall-empty">尚未使用伪造物。请先在物品检视台中完成处理。</span>`
             }
           </div>
           ${
@@ -2762,6 +3549,7 @@ function renderListingEditor() {
               建议售价：${formatCurrency(suggestedMin)} - ${formatCurrency(
                 suggestedMax
               )}
+              · 市场与效果倍率 ×${salePriceMultiplier.toFixed(2)}
             </small>
             <div class="listing-price-warning ${
               priceAboveSuggested ? "" : "is-hidden"
@@ -2858,7 +3646,7 @@ function renderListingRow(listing) {
   `;
 }
 
-function renderBuyerChat(chat) {
+function renderBuyerChat(chat, embedded = false) {
   const state = Game.getState();
   chat.history ??= [];
   chat.trust ??= 50;
@@ -2878,9 +3666,13 @@ function renderBuyerChat(chat) {
   );
   const listingItem = listing?.itemSnapshot;
   return `
-    <div class="secondary-header">
-      <button type="button" class="legacy-button" data-action="back-listings">返回上架中</button>
-    </div>
+    ${
+      embedded
+        ? ""
+        : `<div class="secondary-header">
+            <button type="button" class="legacy-button" data-action="back-listings">返回上架中</button>
+          </div>`
+    }
     <div class="buyer-profile">
       <span class="buyer-avatar buyer-avatar-${escapeHtml(
         buyer.avatar ?? "crane"
@@ -2973,9 +3765,18 @@ function renderUniversalApp() {
         )}" placeholder="点击物品关键词" readonly />
         <button type="button" disabled>搜索</button>
       </div>
+      <button
+        type="button"
+        class="universal-mall-callout"
+        data-action="universal-tab"
+        data-tab="mall"
+      >
+        <strong>商城入口</strong>
+        <span>购买服务、藏品与伪造工具 · 点击进入</span>
+      </button>
       <div class="universal-tabs">
         <button type="button" class="legacy-tab ${activeTab === "search" ? "is-active" : ""}" data-action="universal-tab" data-tab="search">搜索结果</button>
-        <button type="button" class="legacy-tab ${activeTab === "mall" ? "is-active" : ""}" data-action="universal-tab" data-tab="mall">商城</button>
+        <button type="button" class="legacy-tab ${activeTab === "mall" ? "is-active" : ""}" data-action="universal-tab" data-tab="mall">商城 · 服务 / 藏品 / 伪造</button>
       </div>
       <div class="universal-content">
         ${activeTab === "search" ? renderSearchResults() : renderMall()}
@@ -3097,7 +3898,7 @@ function renderMall() {
   return `
     <div class="forgery-play-guide">
       <strong>伪造交易</strong>
-      <span>先购买一种伪造工具，再在上架页选择“伪造什么”和“卖给谁”。匹配的买家更容易成交，审核型买家的识破率更高。</span>
+      <span>先在物品检视台完成清理和检查，再使用补充标签或伪造物；上架时选择卖给谁。匹配的买家更容易成交，审核型买家的识破率更高。</span>
     </div>
     <div class="mall-status">
       <span>保护服务：<b>${state.protectionCharges ?? 0}</b></span>
@@ -3281,114 +4082,6 @@ function renderFolderApp() {
             : `<div class="empty-panel">没有藏品</div>`
         }
       </section>
-    </div>
-  `;
-}
-
-function renderItemDetailApp() {
-  const state = Game.getState();
-  const item = getSelectedItem();
-  if (!item) {
-    return `<div class="empty-panel">请先从我的店铺选择一件物品。</div>`;
-  }
-  const discoveredFacts = (item.facts ?? []).filter(
-    (fact) => fact.discovered
-  );
-
-  return `
-    <div class="item-detail-shell">
-      ${
-        item.category === "special"
-          ? `<div class="contraband-alert">违禁物品：不能正常交易，上报或冒险出售都会产生后果。</div>`
-          : ""
-      }
-      <header>
-        <button type="button" class="legacy-button" data-action="back-shop">返回店铺</button>
-        <div class="detail-icon" aria-hidden="true"></div>
-        <div>
-          <p class="eyebrow">物品详情</p>
-          <h2>${escapeHtml(item.name)}</h2>
-          <span>${getItemStatusLabel(item.status)}</span>
-        </div>
-      </header>
-      ${
-        !state.keywordTipShown
-          ? `<aside class="keyword-usage-tip">
-              <div>
-                <strong>关键词可以点击</strong>
-                <p>点击下方的黄色关键词，会自动打开万物通搜索物品资料。</p>
-              </div>
-              <button type="button" class="legacy-button" data-action="dismiss-keyword-tip">知道了</button>
-            </aside>`
-          : ""
-      }
-      <div class="item-research-fields">
-        <span>物品编号：<b class="key-info">${escapeHtml(
-          item.discoveredCode
-            ? item.code ?? "未确认"
-            : "尚未确认"
-        )}</b></span>
-        <span>来源：<b class="key-alert">${escapeHtml(
-          item.discoveredSource
-            ? item.source ?? "尚未确认"
-            : "尚未通过万物通确认"
-        )}</b></span>
-      </div>
-      ${
-        discoveredFacts.length
-          ? `<div class="detail-section">
-              <strong>万物通已确认</strong>
-              <div class="item-fact-list">
-                ${discoveredFacts
-                  .map(
-                    (fact) => `
-                      <span>${escapeHtml(fact.label)}：<b class="key-info">${escapeHtml(
-                        fact.value
-                      )}</b></span>
-                    `
-                  )
-                  .join("")}
-              </div>
-            </div>`
-          : ""
-      }
-      <p class="item-description">${escapeHtml(item.description ?? "")}</p>
-      <div class="detail-section">
-        <strong>关键词</strong>
-        <div class="keyword-row">
-          ${(item.keywords ?? [])
-            .map(
-              (keyword) => `
-                <button
-                  type="button"
-                  class="keyword-chip is-searchable"
-                  data-action="search-keyword"
-                  data-item-id="${item.id}"
-                  data-keyword="${escapeHtml(keyword)}"
-                >${escapeHtml(keyword)}</button>
-              `
-            )
-            .join("")}
-        </div>
-      </div>
-      <div class="detail-section">
-        <strong>当前估价</strong>
-        <p>${
-          item.searched
-            ? "已通过万物通补充资料。"
-            : `未知，参考区间 ${formatCurrency(
-                Math.round(item.baseValue * 0.7)
-              )} - ${formatCurrency(Math.round(item.baseValue * 1.4))}`
-        }</p>
-      </div>
-      ${
-        item.effect
-          ? `<div class="detail-section item-effect-section">
-              <strong>特殊效果</strong>
-              <p class="key-effect">${escapeHtml(item.effect)}</p>
-            </div>`
-          : ""
-      }
     </div>
   `;
 }

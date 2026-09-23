@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260922-06";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260923-07";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -228,22 +228,34 @@ export const Game = {
 
     if (mode === "sell") {
       const total = calculateOnsiteSaleTotal(auction);
+      const cost = Math.max(0, Number(auction.currentPrice) || 0);
+      const profit = total - cost;
       state.cash += total;
       recordActivity("现场全部卖出", total);
       recordArchetypeProgress("quick_cash");
       auction.result = {
         type: "onsite-sell",
         title: "现场全部卖出",
-        detail: `物品全部被现场买家买走，共收入 ${formatCurrency(total)}。`
+        detail: `物品全部被现场买家买走，共收入 ${formatCurrency(
+          total
+        )}。买入价 ${formatCurrency(cost)}，本次${
+          profit >= 0 ? "利润" : "亏损"
+        } ${formatCurrency(Math.abs(profit))}。`
       };
     } else {
+      const allocatedCosts = allocateAcquisitionCosts(
+        auction.items,
+        Number(auction.currentPrice) || 0
+      );
       state.inventory.unshift(
         ...auction.items.map((item, index) => ({
           ...item,
           id: `onsite_carry_${Date.now().toString(36)}_${index}`,
           status: "viewed",
           searched: false,
-          unlockedTags: []
+          unlockedTags: [],
+          acquisitionCost:
+            item.acquisitionCost ?? allocatedCosts[index] ?? 0
         }))
       );
       auction.result = {
@@ -425,12 +437,18 @@ export const Game = {
 
     if (entry.type === "box" && !entry.opened) {
       entry.opened = true;
-      const openedItems = entry.items.map((item) => ({
+      const allocatedCosts = allocateAcquisitionCosts(
+        entry.items,
+        Number(entry.acquisitionCost) || 0
+      );
+      const openedItems = entry.items.map((item, index) => ({
         ...item,
         id: `${entry.id}_${item.id}`,
         status: "viewed",
         searched: false,
-        unlockedTags: []
+        unlockedTags: [],
+        acquisitionCost:
+          item.acquisitionCost ?? allocatedCosts[index] ?? 0
       }));
       state.inventory = state.inventory.filter((item) => item.id !== entryId);
       state.inventory.unshift(...openedItems);
@@ -457,6 +475,142 @@ export const Game = {
     state.selectedListingId = listing.id;
     state.selectedItemId = listing.itemSnapshot.id;
     commit();
+  },
+
+  selectOwnedItem(itemId) {
+    const inventoryItem = state.inventory.find(
+      (candidate) => candidate.id === itemId
+    );
+    if (inventoryItem) {
+      state.selectedListingId = null;
+      state.selectedItemId = inventoryItem.id;
+      commit();
+      return inventoryItem;
+    }
+    const folderItem = state.folder.find(
+      (candidate) => candidate.id === itemId
+    );
+    if (folderItem) {
+      state.selectedListingId = null;
+      state.selectedItemId = folderItem.id;
+      commit();
+      return folderItem;
+    }
+    const listing = state.listings.find(
+      (candidate) => candidate.itemSnapshot?.id === itemId
+    );
+    if (listing?.itemSnapshot) {
+      state.selectedListingId = listing.id;
+      state.selectedItemId = listing.itemSnapshot.id;
+      commit();
+      return listing.itemSnapshot;
+    }
+    return null;
+  },
+
+  useInspectionAction(itemId, action, productId = null) {
+    const target = findMutableOwnedItem(itemId);
+    if (!target?.item) return "";
+    const item = target.item;
+    normalizeItemData(item);
+    const inspection = item.inspection;
+    let result = "";
+
+    if (action === "clean") {
+      if (inspection.cleanLevel >= 4) {
+        result = "表面已经清理过头，再继续可能损伤细节。";
+      } else {
+        inspection.cleanLevel += 1;
+        const fact = revealNextInspectionFact(item, [
+          "code",
+          "feature",
+          "source"
+        ]);
+        result = fact
+          ? `清理后发现了${fact.label}：${fact.value}。`
+          : "表面干净了一些，但没有发现更多有效信息。";
+        if (inspection.cleanLevel >= 4 && !item.clue) {
+          inspection.damaged = true;
+          item.baseValue = Math.max(10, roundToTen(item.baseValue * 0.92));
+          result += " 用力过猛，表面出现轻微损伤。";
+          recordTrouble(1, "清洁操作损伤物品");
+        }
+      }
+    }
+
+    if (action === "label-check") {
+      inspection.labelChecked = true;
+      item.tagConfidence =
+        item.inspection?.appliedForgery || item.fakeRisk
+          ? "low"
+          : item.unlockedTags?.length
+            ? "high"
+            : "medium";
+      const fact = revealNextInspectionFact(item, [
+        "code",
+        "source",
+        "feature"
+      ]);
+      result = `标签检查完成，可信度：${
+        inspection.labelChecked
+          ? { high: "完整", medium: "部分损坏", low: "可疑" }[
+              item.tagConfidence
+            ]
+          : "未确认"
+      }。${fact ? `同时确认了${fact.label}。` : ""}`;
+    }
+
+    if (action === "detail") {
+      inspection.detailLevel += 1;
+      const fact = revealNextInspectionFact(item);
+      result = fact
+        ? `详细检查确认了${fact.label}：${fact.value}。`
+        : "没有更多可确认的信息。";
+    }
+
+    if (action === "label-fill") {
+      item.unlockedTags = unique([
+        ...(item.unlockedTags ?? []),
+        item.category === "luxury" ? "私人来源" : "旧物",
+        ...(item.keywords ?? []).slice(0, 1)
+      ]);
+      item.tagConfidence = item.inspection?.appliedForgery ? "low" : "high";
+      result = "已经补齐标签，后续买家可以读取更完整的物品信息。";
+    }
+
+    if (action === "apply-forgery") {
+      const product = STAGE_TWO_DATA.mallProducts.find(
+        (candidate) =>
+          candidate.id === productId && candidate.type === "fake"
+      );
+      if (
+        !product ||
+        (state.fakeItems?.[product.id] ?? 0) <= 0
+      ) {
+        result = "没有可用的伪造材料。";
+      } else {
+        state.fakeItems[product.id] -= 1;
+        inspection.appliedForgery = {
+          productId: product.id,
+          name: product.name,
+          forgeryType: product.forgeryType,
+          exposureChance: product.exposureChance
+        };
+        item.tagConfidence = "low";
+        result = `已经应用${product.name}，物品资料出现伪造痕迹。`;
+        recordArchetypeProgress("risk");
+      }
+    }
+
+    inspection.lastResult = result;
+    if (action !== "apply-forgery" || result.startsWith("已经应用")) {
+      advanceInspectionTime(8);
+    }
+    if (target.listing) {
+      target.listing.itemSnapshot = item;
+    }
+    commit();
+    return result;
   },
 
   searchKeyword(itemId, keyword) {
@@ -490,8 +644,8 @@ export const Game = {
       keyword,
       title: `${item.name} · 搜索结果`,
       priceRange: [
-        roundToTen(item.baseValue * 0.82),
-        roundToTen(item.baseValue * 1.55)
+        roundToTen(item.baseValue * 0.62),
+        roundToTen(item.baseValue * 1.1)
       ],
       demand: item.clue ? "线索档案只向持有人开放" : item.category === "luxury" ? "收藏买家需求较高" : "普通买家需求稳定",
       risk: item.clue ? "不能出售或公开转让" : "来源描述无法完全确认",
@@ -530,8 +684,8 @@ export const Game = {
       keyword,
       title: `${item.name} · 现场搜索`,
       priceRange: [
-        roundToTen(item.baseValue * 0.82),
-        roundToTen(item.baseValue * 1.45)
+        roundToTen(item.baseValue * 0.58),
+        roundToTen(item.baseValue * 1)
       ],
       demand: item.category === "luxury" ? "收藏买家需求较高" : "普通买家需求稳定",
       risk: "公开开箱后的来源风险",
@@ -569,8 +723,8 @@ export const Game = {
       keyword,
       title: `${item.name} · 上架物品搜索`,
       priceRange: [
-        roundToTen(item.baseValue * 0.82),
-        roundToTen(item.baseValue * 1.55)
+        roundToTen(item.baseValue * 0.62),
+        roundToTen(item.baseValue * 1.1)
       ],
       demand: item.category === "luxury" ? "收藏买家需求较高" : "普通买家需求稳定",
       risk: "来源描述无法完全确认",
@@ -606,7 +760,7 @@ export const Game = {
       itemId,
       tags: [],
       day: state.day,
-      fakeItemId: null,
+      fakeItemId: item.inspection?.appliedForgery?.productId ?? null,
       forgeryTargetId: null,
       price:
         state.searchResult?.itemId === itemId
@@ -653,10 +807,11 @@ export const Game = {
     const max = Math.max(
       min,
       Math.round(
-        (item?.baseValue ?? 100) *
-          2.5 *
+          (item?.baseValue ?? 100) *
+          1.65 *
           (fakeProduct?.priceMultiplier ?? 1) *
-          (forgeryTarget?.rewardMultiplier ?? 1)
+          (forgeryTarget?.rewardMultiplier ?? 1) *
+          getSalePriceMultiplier(item)
       )
     );
     state.listingDraft.price = Math.max(min, Math.min(max, Number(price) || min));
@@ -684,13 +839,17 @@ export const Game = {
     const forgeryMultiplier =
       (fakeProduct?.priceMultiplier ?? 1) *
       (forgeryTarget?.rewardMultiplier ?? 1);
-    const basePriceRange =
+    const basePriceRangeRaw =
       state.searchResult?.itemId === item.id
         ? state.searchResult.priceRange
         : [
-            roundToTen(item.baseValue * 0.8),
-            roundToTen(item.baseValue * 1.2)
+            roundToTen(item.baseValue * 0.62),
+            roundToTen(item.baseValue * 1.1)
           ];
+    const salePriceMultiplier = getSalePriceMultiplier(item);
+    const basePriceRange = basePriceRangeRaw.map((price) =>
+      roundToTen(price * salePriceMultiplier)
+    );
     const listingPriceRange = fakeProduct
       ? [
           roundToTen(basePriceRange[0] * forgeryMultiplier),
@@ -704,6 +863,7 @@ export const Game = {
       itemId: item.id,
       itemSnapshot: JSON.parse(JSON.stringify(item)),
       title: item.name,
+      costBasis: Math.max(0, Number(item.acquisitionCost) || 0),
       price: draft.price,
       priceRange: listingPriceRange,
       tags: draft.tags,
@@ -731,10 +891,15 @@ export const Game = {
       buyerAttempts: 0
     };
     if (fakeProduct) {
-      state.fakeItems[fakeProduct.id] = Math.max(
-        0,
-        (state.fakeItems[fakeProduct.id] ?? 0) - 1
-      );
+      if (item.inspection?.appliedForgery?.productId !== fakeProduct.id) {
+        state.fakeItems[fakeProduct.id] = Math.max(
+          0,
+          (state.fakeItems[fakeProduct.id] ?? 0) - 1
+        );
+      }
+      if (item.inspection?.appliedForgery?.productId === fakeProduct.id) {
+        item.inspection.appliedForgery = null;
+      }
       recordArchetypeProgress("risk");
     }
     const buyerDelay =
@@ -975,7 +1140,7 @@ export const Game = {
         )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
           chat.buyer,
           "accepted"
-        )}`
+        )}${getTradeProfitText(listing, received)}`
       };
     } else if (chat.trust >= 35) {
       let salePrice = listing.price;
@@ -1007,7 +1172,7 @@ export const Game = {
         )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
           chat.buyer,
           "accepted"
-        )}`
+        )}${getTradeProfitText(listing, received)}`
       };
     } else {
       recordReputation(-2, "买家取消在线交易");
@@ -1234,7 +1399,7 @@ export const Game = {
         )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
           chat.buyer,
           "accepted"
-        )}`;
+        )}${getTradeProfitText(listing, received)}`;
       } else if (chat.trust >= 35) {
         let salePrice = listing.price;
         salePrice = applyBuyerPriceConcession(salePrice, chat);
@@ -1263,7 +1428,7 @@ export const Game = {
         )}。${contrabandSale?.text ?? ""}${getBuyerTradeReaction(
           chat.buyer,
           "accepted"
-        )}`;
+        )}${getTradeProfitText(listing, received)}`;
       } else {
         listing.status =
           state.buyerAttempts < 3 ? "active" : "failed";
@@ -1610,6 +1775,10 @@ export const Game = {
     return state.marketTrend ? { ...state.marketTrend } : null;
   },
 
+  getSalePriceMultiplier(item) {
+    return getSalePriceMultiplier(item);
+  },
+
   getFolderCaseLabel() {
     return ["?", "疑点", "线索", "证物"][
       Math.max(0, Math.min(3, Number(state.folderCaseStage) || 0))
@@ -1781,6 +1950,14 @@ function normalizeState(parsed) {
   parsed.nextPayment.amount = Number(parsed.nextPayment.amount) || CONFIG.firstPayment;
   parsed.nextPayment.dueDay =
     Number(parsed.nextPayment.dueDay) || CONFIG.paymentIntervalDays;
+  if (
+    parsed.totalDebt === 9000 &&
+    parsed.nextPayment.amount === 1200 &&
+    parsed.nextPayment.dueDay === CONFIG.paymentIntervalDays
+  ) {
+    parsed.totalDebt = CONFIG.debtTarget;
+    parsed.nextPayment.amount = CONFIG.firstPayment;
+  }
   parsed.overdueCount = Math.max(
     0,
     Number(parsed.overdueCount) || 0
@@ -2153,6 +2330,24 @@ function normalizeItemData(item) {
   item.searched = item.searched === true;
   item.clue = item.clue === true;
   if (item.clue) item.sellable = false;
+  item.acquisitionCost = Math.max(
+    0,
+    Number(item.acquisitionCost) || 0
+  );
+  item.inspection = {
+    cleanLevel: Math.max(
+      0,
+      Number(item.inspection?.cleanLevel) || 0
+    ),
+    labelChecked: item.inspection?.labelChecked === true,
+    detailLevel: Math.max(
+      0,
+      Number(item.inspection?.detailLevel) || 0
+    ),
+    damaged: item.inspection?.damaged === true,
+    appliedForgery: item.inspection?.appliedForgery ?? null,
+    lastResult: item.inspection?.lastResult ?? ""
+  };
   item.discoveredCode =
     item.discoveredCode === true ||
     item.facts.some((fact) => fact.kind === "code" && fact.discovered);
@@ -2299,6 +2494,18 @@ function getBuyerTradeReaction(buyer, outcome) {
       ? `${buyer?.name ?? "买家"}已经停止回复。`
       : feedback[outcome];
   return text ? ` ${text}` : "";
+}
+
+function getTradeProfitText(listing, received) {
+  const costBasis = Math.max(
+    0,
+    Number(listing?.costBasis ?? listing?.itemSnapshot?.acquisitionCost) || 0
+  );
+  if (!costBasis) return "";
+  const profit = received - costBasis;
+  return ` 买入价 ${formatCurrency(costBasis)}，本次${
+    profit >= 0 ? "利润" : "亏损"
+  } ${formatCurrency(Math.abs(profit))}。`;
 }
 
 function pickRunRules() {
@@ -2509,6 +2716,10 @@ function createAuctionBoxEntry(auction) {
   const source = auction?.items?.length
     ? auction.items
     : STAGE_TWO_DATA.auctionBox.items;
+  const allocatedCosts = allocateAcquisitionCosts(
+    source,
+    Number(auction?.currentPrice) || 0
+  );
   return {
     id: `box_${Date.now().toString(36)}`,
     type: "box",
@@ -2516,8 +2727,33 @@ function createAuctionBoxEntry(auction) {
     destination: auction?.destination ?? STAGE_TWO_DATA.auctionBox.destination,
     appearance: auction?.appearance ?? STAGE_TWO_DATA.auctionBox.appearance,
     opened: false,
-    items: source.map((item) => JSON.parse(JSON.stringify(item)))
+    acquisitionCost: Number(auction?.currentPrice) || 0,
+    items: source.map((item, index) =>
+      JSON.parse(
+        JSON.stringify({
+          ...item,
+          acquisitionCost:
+            item.acquisitionCost ?? allocatedCosts[index] ?? 0
+        })
+      )
+    )
   };
+}
+
+function allocateAcquisitionCosts(items, totalCost) {
+  const totalValue = items.reduce(
+    (sum, item) => sum + Math.max(1, Number(item.baseValue) || 0),
+    0
+  );
+  return items.map((item) =>
+    Math.max(
+      0,
+      Math.round(
+        (totalCost * Math.max(1, Number(item.baseValue) || 0)) /
+          Math.max(1, totalValue)
+      )
+    )
+  );
 }
 
 function findCounterBid(competitors, currentBid) {
@@ -2790,7 +3026,7 @@ function resolveTradeObstruction(chat, listing) {
   const suggestedMax = Math.max(1, listing.priceRange?.[1] ?? 1);
   const priceRatio = effectivePrice / suggestedMax;
   const priceFailureChance =
-    priceRatio > 1 ? Math.min(0.72, (priceRatio - 1) * 0.5) : 0;
+    priceRatio > 1 ? Math.min(0.88, (priceRatio - 1) * 0.75) : 0;
   if (priceFailureChance > 0 && Math.random() < priceFailureChance) {
     recordReputation(-2, "报价过高导致买家放弃");
     return failListingTrade(
@@ -2950,7 +3186,7 @@ function calculateOnsiteSaleTotal(auction) {
   ) {
     total = Math.round(total * 1.1);
   }
-  return total;
+  return Math.round(total * CONFIG.onsiteSaleReturn);
 }
 
 function recordActivity(label, amount = 0) {
@@ -2994,6 +3230,13 @@ function applyContrabandSale(item, grossAmount, source) {
     payoutMultiplier
   };
   state.contrabandPending.push(pending);
+  const prisonChance =
+    state.contrabandSales >= 2 && state.contrabandSales <= 5
+      ? { 2: 0.22, 3: 0.38, 4: 0.58, 5: 1 }[state.contrabandSales]
+      : 0;
+  if (prisonChance > 0 && Math.random() < prisonChance) {
+    triggerEnding("prison");
+  }
   recordTrouble(
     Math.min(4, state.contrabandAttention),
     "违禁品交易增加永久关注度"
@@ -3173,6 +3416,48 @@ function advanceClueCase() {
   );
 }
 
+function findMutableOwnedItem(itemId) {
+  const inventoryItem = state.inventory.find((item) => item.id === itemId);
+  if (inventoryItem) return { item: inventoryItem, listing: null };
+  const folderItem = state.folder.find((item) => item.id === itemId);
+  if (folderItem) return { item: folderItem, listing: null };
+  const listing = state.listings.find(
+    (candidate) => candidate.itemSnapshot?.id === itemId
+  );
+  if (listing?.itemSnapshot) {
+    return { item: listing.itemSnapshot, listing };
+  }
+  return null;
+}
+
+function revealNextInspectionFact(item, preferredKinds = []) {
+  const facts = Array.isArray(item?.facts) ? item.facts : [];
+  const preferred = preferredKinds
+    .map((kind) =>
+      facts.find((fact) => fact.kind === kind && !fact.discovered)
+    )
+    .find(Boolean);
+  const fact =
+    preferred ?? facts.find((candidate) => !candidate.discovered);
+  if (!fact) return null;
+  fact.discovered = true;
+  if (fact.kind === "code") item.discoveredCode = true;
+  if (fact.kind === "source") item.discoveredSource = true;
+  item.unlockedTags = unique([
+    ...(item.unlockedTags ?? []),
+    item.category === "luxury" ? "私人来源" : "可收藏",
+    fact.keyword
+  ].filter(Boolean));
+  return fact;
+}
+
+function advanceInspectionTime(minutes) {
+  state.timeMinutes = Math.min(
+    FORCED_SLEEP + 55,
+    state.timeMinutes + Math.max(0, Number(minutes) || 0)
+  );
+}
+
 function triggerEnding(endingId) {
   if (state.ending) return;
   const template = STAGE_TWO_DATA.endings?.[endingId];
@@ -3231,6 +3516,38 @@ function applySaleModifiers(value, item) {
   return Math.round(result);
 }
 
+function getSalePriceMultiplier(item) {
+  let multiplier = CONFIG.onlineSaleReturn;
+  if (item?.effectKey === "sale_bonus") multiplier *= 1.1;
+  if (
+    item?.effectKey === "sale_bonus_global" ||
+    hasCollectionEffect("sale_bonus_global")
+  ) {
+    multiplier *= 1.05;
+  }
+  if (hasActiveRule("collector_heat") && item?.category === "luxury") {
+    multiplier *= 1.15;
+  }
+  if (hasActiveRule("counterfeit_flood") && item?.category === "luxury") {
+    multiplier *= 0.9;
+  }
+  if (
+    item?.category === "special" &&
+    hasArchetypeEffect("archetype_risk")
+  ) {
+    multiplier *= 1.18;
+  }
+  if (hasCollectionEffect("combo_buyer_network")) multiplier *= 1.03;
+  const effect = state.marketEffect;
+  if (
+    effect &&
+    (effect.category === "all" || effect.category === item?.category)
+  ) {
+    multiplier *= effect.multiplier;
+  }
+  return multiplier;
+}
+
 function calculateNetSale(value, item) {
   let fee =
     item?.effectKey === "fee_reduction" ||
@@ -3239,8 +3556,24 @@ function calculateNetSale(value, item) {
       : 0.9;
   if (hasCollectionEffect("combo_clean_books")) fee -= 0.03;
   if (hasArchetypeEffect("archetype_negotiation")) fee -= 0.02;
-  fee = Math.max(0.82, fee);
-  return Math.round(value * fee);
+  fee = Math.max(0.78, fee);
+  const adjustedValue =
+    applySaleModifiers(value, item) *
+    CONFIG.onlineSaleReturn *
+    rollSaleVariation();
+  return Math.round(adjustedValue * fee);
+}
+
+function rollSaleVariation() {
+  const rarityRoll = Math.random();
+  if (rarityRoll < 0.08) {
+    return 0.75 + Math.random() * 0.1;
+  }
+  if (rarityRoll > 0.93) {
+    return 1.3 + Math.random() * 0.25;
+  }
+  const averageRoll = (Math.random() + Math.random()) / 2;
+  return 0.98 + averageRoll * 0.12;
 }
 
 function hasCollectionEffect(effectKey) {
@@ -3555,7 +3888,7 @@ function completeLoanPayment() {
     return paidAmount;
   }
   state.nextPayment = {
-    amount: paidAmount + 500,
+    amount: paidAmount + CONFIG.paymentIncrement,
     dueDay: state.nextPayment.dueDay + CONFIG.paymentIntervalDays,
     overdue: false
   };

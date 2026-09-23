@@ -1,3 +1,3 @@
-import { mountUI } from "./ui.js?v=20260922-06";
+import { mountUI } from "./ui.js?v=20260923-07";
 
 mountUI();
