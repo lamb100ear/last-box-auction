@@ -1,4 +1,4 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260923-07";
+import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260923-17";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -114,6 +114,7 @@ export const Game = {
 
     if (appId === "folder") {
       state.folderOpened = true;
+      state.folderNotice = null;
       this.checkBuyerArrival();
     }
 
@@ -122,6 +123,16 @@ export const Game = {
     }
 
     commit();
+  },
+
+  markStoryEmailRead(mailId) {
+    const mail = (state.mainStory?.storyEmails ?? []).find(
+      (candidate) => candidate.id === mailId
+    );
+    if (!mail?.read) {
+      mail.read = true;
+      commit();
+    }
   },
 
   viewNews() {
@@ -156,6 +167,10 @@ export const Game = {
       auction.status = "won";
       state.cash -= auction.currentPrice;
       auction.lastAction = "won";
+      if (auction.storyBox) {
+        state.mainStory.specialBoxWon = true;
+        state.mainStory.stage = "box_owned";
+      }
       recordActivity("拍下箱子", -auction.currentPrice);
       state.lastMessage = `成交，你花 ${formatCurrency(
         auction.currentPrice
@@ -176,6 +191,11 @@ export const Game = {
   chooseAuctionOutcome(outcome) {
     const auction = state.auction;
     if (auction.status !== "won") return;
+    if (auction.storyBox && outcome !== "home") {
+      state.lastMessage = "这只私人收藏箱只能带回店铺处理。";
+      commit();
+      return;
+    }
 
     if (outcome === "resale") {
       const quote = applyResaleModifiers(
@@ -210,6 +230,10 @@ export const Game = {
         ...createAuctionBoxEntry(auction),
         status: "unopened"
       });
+      if (auction.storyBox) {
+        state.mainStory.stage = "box_home";
+        state.lastMessage = "私人收藏箱已经带回，请打开箱子检查内衬。";
+      }
       auction.result = {
         type: "home",
         title: "箱子已带回",
@@ -450,8 +474,19 @@ export const Game = {
         acquisitionCost:
           item.acquisitionCost ?? allocatedCosts[index] ?? 0
       }));
+      const hiddenClues = openedItems.filter(
+        (item) => item.clue && item.hiddenInLining
+      );
       state.inventory = state.inventory.filter((item) => item.id !== entryId);
       state.inventory.unshift(...openedItems);
+      if (entry.storyBox && hiddenClues.length) {
+        state.mainStory.specialBoxOpened = true;
+        state.mainStory.keyFound = true;
+        state.mainStory.stage = "key_found";
+        state.folderCaseStage = Math.max(1, state.folderCaseStage);
+        state.folderView = "clues";
+        queueMainStoryEmail("zhou_initial");
+      }
       state.selectedItemId = openedItems[0]?.id ?? null;
       state.guideStep = "SEARCH";
       commit();
@@ -561,11 +596,29 @@ export const Game = {
     }
 
     if (action === "detail") {
-      inspection.detailLevel += 1;
-      const fact = revealNextInspectionFact(item);
-      result = fact
-        ? `详细检查确认了${fact.label}：${fact.value}。`
-        : "没有更多可确认的信息。";
+      if (inspection.detailLevel >= 2) {
+        result = "细节检查已经完成。";
+      } else {
+        inspection.detailLevel += 1;
+        const remaining = (item.facts ?? []).filter(
+          (fact) => !fact.discovered
+        );
+        const revealCount =
+          inspection.detailLevel === 1
+            ? Math.ceil(remaining.length / 2)
+            : remaining.length;
+        const revealed = [];
+        for (let index = 0; index < revealCount; index += 1) {
+          const fact = revealNextInspectionFact(item);
+          if (!fact) break;
+          revealed.push(`${fact.label}：${fact.value}`);
+        }
+        result = revealed.length
+          ? `细节检查完成 ${inspection.detailLevel} / 2：${revealed.join(
+              "；"
+            )}。`
+          : "没有更多可确认的信息。";
+      }
     }
 
     if (action === "label-fill") {
@@ -620,6 +673,42 @@ export const Game = {
     if (!item) return;
     normalizeItemData(item);
     state.keywordTipShown = true;
+
+    if (item.clue && keyword === "K-12") {
+      const story = state.mainStory;
+      story.k12SearchCount += 1;
+      if (story.k12SearchCount === 1 || !story.act1Solved) {
+        state.searchResult = {
+          itemId,
+          keyword,
+          classified: true,
+          specialArchive: true,
+          archiveCode: "K-12",
+          title: "受限档案：K-12",
+          demand: "K-12 不是普通物品编号。",
+          risk: "档案权限不足，暂时无法对应寄存设施。",
+          priceRange: [0, 0],
+          unlockedTags: ["受限档案", "非普通编号"]
+        };
+      } else {
+        story.lockerUnlocked = true;
+        state.searchResult = {
+          itemId,
+          keyword,
+          classified: true,
+          specialArchive: true,
+          archiveCode: "K-12",
+          title: "受限档案：旧车站 K-12",
+          demand: "K-12 对应旧车站长期寄存柜。",
+          risk: "柜内资料尚未取回。",
+          priceRange: [0, 0],
+          unlockedTags: ["旧车站", "寄存柜"],
+          mainStoryAction: "open-locker"
+        };
+      }
+      commit();
+      return;
+    }
 
     item.searched = true;
     item.status = "researched";
@@ -697,6 +786,118 @@ export const Game = {
     commit();
   },
 
+  openMainStoryLocker() {
+    const story = state.mainStory;
+    if (!story.lockerUnlocked || story.act2Solved) return false;
+    STAGE_TWO_DATA.mainStory.evidenceItems.forEach((template) => {
+      if (state.folder.some((item) => item.templateId === template.id)) return;
+      state.folder.push({
+        ...initializeItem(template),
+        id: `${template.id}_${Date.now().toString(36)}`,
+        templateId: template.id,
+        clue: true,
+        sellable: false,
+        originNpc: "zhou_tang"
+      });
+    });
+    story.act2Solved = true;
+    story.stage = "act2";
+    story.zhaoDueDay = state.day + 1;
+    story.zhaoEmailSent = false;
+    story.zhaoActive = false;
+    state.folderCaseStage = Math.max(2, state.folderCaseStage);
+    state.universalUnlockStage = Math.max(2, state.universalUnlockStage);
+    state.news = [
+      {
+        id: `story_news_old_case_${state.day}`,
+        title: "十年前钟表店旧案记录",
+        effect: "嫌疑人赵衡在审判前被登记死亡",
+        detail:
+          "十年前，钟表店发生入室抢劫案。店主是收藏家周棠的老师，案发后不幸身亡，周棠因此长期追查此案。警方曾锁定嫌疑人赵衡，但案件进入审判前，赵衡被登记死亡，调查随即终止。近期旧案资料重新出现，警方正在核对死亡登记与现场证据。",
+        duration: "案件新闻",
+        storyNews: true
+      }
+    ];
+    state.newsVisible = true;
+    state.newsRead = false;
+    state.folderNotice = {
+      id: `folder_notice_${Date.now().toString(36)}`,
+      message: "藏品新增线索可查看，请打开文件夹查看旧车站证据。"
+    };
+    state.lastMessage = "寄存柜证据已经取回，赵衡开始关注店铺。";
+    commit();
+    return true;
+  },
+
+  combineMainStoryEvidence() {
+    if (!state.mainStory.act2Solved || state.mainStory.act3Solved) {
+      return false;
+    }
+    solveMainStoryAct3();
+    commit();
+    return true;
+  },
+
+  resolveZhaoOffer(decision) {
+    const story = state.mainStory;
+    if (story.zhaoOfferResolved) return false;
+    story.zhaoOfferResolved = true;
+    if (decision === "accept") {
+      const evidenceIds = new Set([
+        "mysterious_key",
+        ...STAGE_TWO_DATA.mainStory.evidenceItems.map((item) => item.id)
+      ]);
+      state.folder = state.folder.filter(
+        (item) => !evidenceIds.has(item.templateId ?? item.id)
+      );
+      state.cash += 18000;
+      state.totalDebt = Math.max(0, state.totalDebt - 5000);
+      story.zhaoPurchaseAccepted = true;
+      recordActivity("向赵衡出售全部特殊藏品", 18000);
+      triggerEnding("main_zhao");
+    } else {
+      story.zhaoRefused = true;
+      story.zhaoActive = true;
+      solveMainStoryAct3();
+      state.folderNotice = {
+        id: `folder_notice_${Date.now().toString(36)}`,
+        message: "证据链已经可以整理，请打开文件夹查看最终选择。"
+      };
+    }
+    commit();
+    return true;
+  },
+
+  resolveMainStoryChoice(choiceId) {
+    const story = state.mainStory;
+    if (!story.act3Solved || story.finalChoice) return false;
+    const choice = STAGE_TWO_DATA.mainStory.choices.find(
+      (candidate) => candidate.id === choiceId
+    );
+    if (!choice) return false;
+    if (choiceId === "zhao") {
+      state.cash += 12000;
+      state.totalDebt = Math.max(0, state.totalDebt - 8000);
+      recordActivity("出售案件证据", 12000);
+    }
+    if (choiceId === "investigator") {
+      recordReputation(15, "将旧案证据交给调查机构");
+      state.protectionCharges += 1;
+    }
+    if (choiceId === "blackmail") {
+      state.cash += 3500;
+      recordActivity("赵衡支付的长期封口费", 3500);
+    }
+    if (choiceId === "police") {
+      recordReputation(12, "公开旧案证据");
+    }
+    story.finalChoice = choiceId;
+    story.stage = "resolved";
+    triggerEnding(choice.endingId);
+    commit();
+    return true;
+  },
+
   searchListingItem(listingId, keyword) {
     const listing = state.listings.find(
       (candidate) => candidate.id === listingId
@@ -743,7 +944,17 @@ export const Game = {
     item.status = "kept";
     state.folder.push(item);
     state.folderViewed = true;
-    recordArchetypeProgress("storage");
+    if (item.clue) {
+      item.sellable = false;
+      state.folderView = "clues";
+      state.folderCaseStage = Math.max(
+        Number(state.folderCaseStage) || 0,
+        Number(item.clueStage) || 1
+      );
+      state.lastMessage = `线索“${item.name}”已经归档，可以在文件夹中查看。`;
+    } else {
+      recordArchetypeProgress("storage");
+    }
     state.guideStep = "FOLDER";
     commit();
   },
@@ -887,7 +1098,7 @@ export const Game = {
       forgeryTargetName: forgeryTarget?.name ?? null,
       targetBuyerIds: forgeryTarget?.buyerIds ?? [],
       listingDay: draft.day,
-      status: "active",
+      status: draft.day <= state.day ? "active" : "scheduled",
       buyerAttempts: 0
     };
     if (fakeProduct) {
@@ -910,14 +1121,19 @@ export const Game = {
     state.inventory = state.inventory.filter(
       (candidate) => candidate.id !== item.id
     );
-    state.activeListingId = listing.id;
-    state.buyerSchedule.push({
-      id: `buyerschedule_${Date.now().toString(36)}`,
-      time: state.timeMinutes + buyerDelay,
-      listingId: listing.id
-    });
+    if (listing.status === "active") {
+      state.activeListingId = listing.id;
+      state.buyerSchedule.push({
+        id: `buyerschedule_${Date.now().toString(36)}`,
+        time: state.timeMinutes + buyerDelay,
+        listingId: listing.id
+      });
+    }
     state.listingDraft = null;
-    state.buyerArrivalAt = state.timeMinutes + buyerDelay;
+    state.buyerArrivalAt =
+      listing.status === "active"
+        ? state.timeMinutes + buyerDelay
+        : null;
     state.buyerAttempts = 0;
     this.setGuideStep("FOLDER");
     commit();
@@ -1118,7 +1334,10 @@ export const Game = {
         listingItem?.category === "special"
           ? applyContrabandSale(listingItem, netSale, "在线买家")
           : null;
-      const received = contrabandSale?.deposit ?? netSale;
+      const received = applyMainStoryBuyerBonus(
+        chat,
+        contrabandSale?.deposit ?? netSale
+      );
       state.cash += received;
       listing.status = "sold";
       recordReputation(
@@ -1150,7 +1369,10 @@ export const Game = {
         listingItem?.category === "special"
           ? applyContrabandSale(listingItem, netSale, "在线买家")
           : null;
-      const received = contrabandSale?.deposit ?? netSale;
+      const received = applyMainStoryBuyerBonus(
+        chat,
+        contrabandSale?.deposit ?? netSale
+      );
       state.cash += received;
       listing.status = "sold";
       recordReputation(
@@ -1231,6 +1453,10 @@ export const Game = {
       }
     }
 
+    if (completedSale && chat.buyer?.id === "zhao_heng") {
+      solveMainStoryAct3();
+    }
+
     chat.result = feedback;
     state.lastTradeFeedback = feedback;
     state.lastMessage = feedback.text;
@@ -1302,6 +1528,7 @@ export const Game = {
       return { forcedSleep: false, buyerArrived: false, day: state.day };
     }
     state.timeMinutes += minutes;
+    processMainStoryTime();
     if (
       state.timeMinutes >= state.nextNewsTime &&
       !state.newsRead &&
@@ -1379,7 +1606,10 @@ export const Game = {
           listingItem?.category === "special"
             ? applyContrabandSale(listingItem, netSale, "休眠结算买家")
             : null;
-        const received = contrabandSale?.deposit ?? netSale;
+        const received = applyMainStoryBuyerBonus(
+          chat,
+          contrabandSale?.deposit ?? netSale
+        );
         state.cash += received;
         recordActivity("在线商品成交", received);
         listing.status = "sold";
@@ -1408,7 +1638,10 @@ export const Game = {
           listingItem?.category === "special"
             ? applyContrabandSale(listingItem, netSale, "休眠结算买家")
             : null;
-        const received = contrabandSale?.deposit ?? netSale;
+        const received = applyMainStoryBuyerBonus(
+          chat,
+          contrabandSale?.deposit ?? netSale
+        );
         state.cash += received;
         recordActivity("在线商品成交", received);
         listing.status = "sold";
@@ -1523,8 +1756,11 @@ export const Game = {
     if (state.ending) state.summaryOpen = false;
     state.day += 1;
     state.timeMinutes = DAY_START;
+    activateScheduledListings();
     refreshActiveRules();
     prepareDailyNews();
+    maybePublishMainStoryNews();
+    processMainStoryTime();
     maybeCreateThreatEvent();
     state.guideStep = "DONE";
     state.calendarOpened = false;
@@ -1557,7 +1793,11 @@ export const Game = {
     state.listingDraft = null;
     state.loanTakenToday = false;
     state.troubleReductionUsed = false;
-    state.auction = createAuctionState(pickDailyAuctionBox(), state.day, 1);
+    state.auction = createAuctionState(
+      pickAuctionBoxForDay(),
+      state.day,
+      1
+    );
     state.lastMessage = saleMessage;
     state.dailyLedger = [];
     state.statusNotice = null;
@@ -1593,6 +1833,30 @@ export const Game = {
     return true;
   },
 
+  payOffAllDebt() {
+    if (
+      state.ending ||
+      state.loanDefaulted ||
+      state.totalDebt <= 0 ||
+      state.cash < state.totalDebt
+    ) {
+      return false;
+    }
+    const paidAmount = state.totalDebt;
+    state.cash -= paidAmount;
+    state.totalDebt = 0;
+    state.nextPayment = {
+      amount: 0,
+      dueDay: state.nextPayment.dueDay,
+      overdue: false
+    };
+    state.paymentNoticeOpen = false;
+    recordActivity("一次性偿还全部贷款", -paidAmount);
+    triggerEnding("debt_free");
+    commit();
+    return true;
+  },
+
   dismissPaymentNotice() {
     state.paymentNoticeOpen = false;
     commit();
@@ -1616,7 +1880,8 @@ export const Game = {
   unlistListing(listingId) {
     const listing = state.listings.find(
       (candidate) =>
-        candidate.id === listingId && candidate.status === "active"
+        candidate.id === listingId &&
+        ["active", "scheduled"].includes(candidate.status)
     );
     if (!listing) return;
     listing.status = "unlisted";
@@ -1843,11 +2108,13 @@ function createInitialState() {
     threatResolvedCount: 0,
     arrested: false,
     ending: null,
+    mainStory: createMainStoryState(),
     auction: createAuctionState(STAGE_TWO_DATA.auctionBox, 1, 1),
     inventory: [createStarterItem()],
     folder: [createFolderItem(), createClueItem()],
     folderCaseStage: 0,
     folderView: "archive",
+    folderNotice: null,
     universalUnlockStage: 0,
     listings: [],
     activeListingId: null,
@@ -1894,6 +2161,36 @@ function createInitialState() {
     statusNotice: null,
     statusLedger: [],
     troubleReasons: []
+  };
+}
+
+function createMainStoryState() {
+  return {
+    stage: "inactive",
+    specialBoxWon: false,
+    specialBoxOpened: false,
+    emailReceived: false,
+    pendingEmailDay: null,
+    newsPublished: false,
+    newsDay: null,
+    oldFoxContacted: false,
+    oldFoxContactDay: null,
+    oldFoxDueDay: null,
+    lockerNoticeShown: false,
+    keyFound: false,
+    k12SearchCount: 0,
+    lockerUnlocked: false,
+    act1Solved: false,
+    act2Solved: false,
+    act3Solved: false,
+    zhaoActive: false,
+    zhaoDueDay: null,
+    zhaoEmailSent: false,
+    zhaoOfferResolved: false,
+    zhaoPurchaseAccepted: false,
+    zhaoRefused: false,
+    finalChoice: null,
+    storyEmails: []
   };
 }
 
@@ -2094,7 +2391,30 @@ function normalizeState(parsed) {
   parsed.folderView = ["clues", "mall"].includes(parsed.folderView)
     ? parsed.folderView
     : "archive";
+  parsed.folderNotice ??= null;
   parsed.ending ??= null;
+  parsed.mainStory = {
+    ...createMainStoryState(),
+    ...(parsed.mainStory ?? {})
+  };
+  parsed.mainStory.storyEmails = Array.isArray(
+    parsed.mainStory.storyEmails
+  )
+    ? parsed.mainStory.storyEmails
+    : [];
+  if (parsed.mainStory.act1Solved) {
+    parsed.mainStory.lockerUnlocked = true;
+    if (
+      !parsed.mainStory.lockerNoticeShown &&
+      !parsed.mainStory.act2Solved
+    ) {
+      parsed.folderNotice ??= {
+        id: "folder_notice_locker_ready",
+        message: "旧车站寄存柜的关键信息已经可以查询，请打开文件夹核对线索。"
+      };
+      parsed.mainStory.lockerNoticeShown = true;
+    }
+  }
   if (!parsed.folder.some((item) => item.clue)) {
     parsed.folder.push(createClueItem());
   }
@@ -2174,6 +2494,7 @@ function normalizeBuyerChat(chat, sourceState) {
 function createAuctionState(template, day, lotNumber) {
   return {
     templateId: template.id,
+    storyBox: template.storyBox === true,
     day,
     lotNumber,
     maxLots: 2,
@@ -2342,7 +2663,7 @@ function normalizeItemData(item) {
     labelChecked: item.inspection?.labelChecked === true,
     detailLevel: Math.max(
       0,
-      Number(item.inspection?.detailLevel) || 0
+      Math.min(2, Number(item.inspection?.detailLevel) || 0)
     ),
     damaged: item.inspection?.damaged === true,
     appliedForgery: item.inspection?.appliedForgery ?? null,
@@ -2461,12 +2782,40 @@ function pickDailyAuctionBox() {
   return boxes[Math.floor(Math.random() * boxes.length)];
 }
 
+function pickAuctionBoxForDay() {
+  const story = state.mainStory;
+  if (
+    story &&
+    !story.specialBoxWon &&
+    state.day >= STAGE_TWO_DATA.mainStory.startDay
+  ) {
+    return STAGE_TWO_DATA.mainStory.specialBox;
+  }
+  return pickDailyAuctionBox();
+}
+
 function pickBuyerProfile(listing) {
+  if (
+    state.mainStory?.zhaoActive &&
+    listing?.itemSnapshot?.originNpc === "zhou_tang"
+  ) {
+    return { ...STAGE_TWO_DATA.mainStory.zhaoBuyer };
+  }
   const targetIds = listing?.targetBuyerIds ?? [];
   const targeted = STAGE_TWO_DATA.buyerProfiles.filter((buyer) =>
     targetIds.includes(buyer.id)
   );
-  const buyers = targeted.length ? targeted : STAGE_TWO_DATA.buyerProfiles;
+  const preferredBuyers = targeted.length
+    ? targeted
+    : STAGE_TWO_DATA.buyerProfiles;
+  const buyers = preferredBuyers.filter(
+    (buyer) => !(state.mainStory?.oldFoxContacted && buyer.id === "old_fox")
+  );
+  if (!buyers.length) {
+    return STAGE_TWO_DATA.buyerProfiles.find(
+      (buyer) => buyer.id !== "old_fox"
+    );
+  }
   return buyers[Math.floor(Math.random() * buyers.length)];
 }
 
@@ -2508,6 +2857,11 @@ function getTradeProfitText(listing, received) {
   } ${formatCurrency(Math.abs(profit))}。`;
 }
 
+function applyMainStoryBuyerBonus(chat, amount) {
+  if (chat?.buyer?.id !== "zhao_heng") return amount;
+  return Math.round(amount * 1.18);
+}
+
 function pickRunRules() {
   return shuffle([...STAGE_TWO_DATA.runRules])
     .slice(0, 2)
@@ -2525,6 +2879,38 @@ function refreshActiveRules() {
 
 function selectBuyerQuestions(item, profile = {}) {
   normalizeItemData(item);
+  if (profile.id === "zhao_heng") {
+    const preferredKinds = ["packaging", "owner", "source"];
+    const questions = preferredKinds
+      .map((kind) => {
+        const fact = (item?.facts ?? []).find(
+          (candidate) => candidate.kind === kind
+        );
+        const template =
+          STAGE_TWO_DATA.buyerQuestionTemplates[kind] ??
+          STAGE_TWO_DATA.buyerQuestionTemplates.source;
+        return fact
+          ? personalizeBuyerQuestion(
+              {
+                id: fact.id,
+                kind: fact.kind,
+                text: template.text,
+                replies: buildRepliesForFact(fact)
+              },
+              profile
+            )
+          : null;
+      })
+      .filter(Boolean);
+    const generic =
+      STAGE_TWO_DATA.buyerQuestionPool.find(
+        (question) => question.id === "packaging"
+      );
+    if (generic && questions.length < 3) {
+      questions.push(personalizeBuyerQuestion({ ...generic }, profile));
+    }
+    return questions.slice(0, 3);
+  }
   const focus = new Set(profile?.verificationFocus ?? []);
   const informationFacts = shuffle(
     [...(item?.facts ?? [])].filter((fact) =>
@@ -2723,6 +3109,7 @@ function createAuctionBoxEntry(auction) {
   return {
     id: `box_${Date.now().toString(36)}`,
     type: "box",
+    storyBox: auction?.storyBox === true,
     name: "无人认领行李箱",
     destination: auction?.destination ?? STAGE_TWO_DATA.auctionBox.destination,
     appearance: auction?.appearance ?? STAGE_TWO_DATA.auctionBox.appearance,
@@ -2732,6 +3119,7 @@ function createAuctionBoxEntry(auction) {
       JSON.parse(
         JSON.stringify({
           ...item,
+          templateId: item.templateId ?? item.id,
           acquisitionCost:
             item.acquisitionCost ?? allocatedCosts[index] ?? 0
         })
@@ -2944,13 +3332,13 @@ function applyVisitorChoice(visitor, action) {
       .sort((a, b) => b.baseValue - a.baseValue)[0];
     if (!special) {
       recordReputation(1, "拒绝无记录交易");
-      return "神秘买家没有找到特殊物品，只留下了一张空名片。";
+      return "匿名收购客检查库存后没有发现符合条件的特殊藏品，留下名片后离开。";
     }
     const price = roundToTen(special.baseValue * 1.5);
     const contrabandSale = applyContrabandSale(
       special,
       price,
-      "神秘买家"
+      "匿名收购客"
     );
     state.cash += contrabandSale.deposit;
     removeSpecialItemEverywhere(special.id);
@@ -3997,6 +4385,154 @@ function prepareDailyNews() {
   state.nextNewsTime = DAY_START;
 }
 
+function queueMainStoryEmail(type) {
+  const story = state.mainStory;
+  if (type === "zhou_initial") {
+    story.pendingEmailDay = state.day;
+  }
+}
+
+function processMainStoryTime() {
+  const story = state.mainStory;
+  const oldFoxDueDay = story.oldFoxDueDay ?? Math.max(5, story.newsDay ?? 5);
+  if (
+    !story.emailReceived &&
+    story.pendingEmailDay === state.day &&
+    state.timeMinutes >= 20 * 60
+  ) {
+    deliverMainStoryEmail("zhou_initial");
+  }
+  if (
+    story.newsPublished &&
+    !story.oldFoxContacted &&
+    (state.day > oldFoxDueDay ||
+      (state.day === oldFoxDueDay &&
+        state.timeMinutes >= 22 * 60))
+  ) {
+    deliverMainStoryEmail("old_fox");
+    story.oldFoxContacted = true;
+    story.act1Solved = true;
+    story.stage = "act1";
+    state.folderCaseStage = Math.max(1, state.folderCaseStage);
+    state.universalUnlockStage = Math.max(1, state.universalUnlockStage);
+  }
+  if (
+    story.act2Solved &&
+    !story.zhaoEmailSent &&
+    state.day >= (story.zhaoDueDay ?? state.day + 1)
+  ) {
+    deliverMainStoryEmail("zhao_offer");
+    story.zhaoEmailSent = true;
+  }
+}
+
+function deliverMainStoryEmail(type) {
+  const story = state.mainStory;
+  if (type === "zhou_initial") {
+    if (story.emailReceived) return;
+    const mailDay = story.pendingEmailDay ?? state.day;
+    story.storyEmails.unshift({
+      id: `story_mail_zhou_${mailDay}`,
+      sender: "周棠",
+      sentAt: `第 ${mailDay} 天 20:00`,
+      subject: "你拍下的箱子",
+      body:
+        "你拍下的箱子内衬里有一把神秘的钥匙。不要交给任何人，也不要回应陌生人的收购。",
+      kind: "story",
+      read: false
+    });
+    story.emailReceived = true;
+    story.stage = "email";
+    state.lastMessage = "收到一封来自周棠账号的异常邮件。";
+    return;
+  }
+  if (type === "old_fox") {
+    const mailDay =
+      story.oldFoxDueDay ?? Math.max(5, story.newsDay ?? state.day);
+    story.storyEmails.unshift({
+      id: `story_mail_fox_${mailDay}`,
+      sender: "旧货狐狸",
+      sentAt: `第 ${mailDay} 天 22:00`,
+      subject: "关于周棠的钥匙",
+      body:
+        "我不是周棠。有人雇我去周宅书房取一把钥匙，我到的时候，周棠已经死在卧室。我不敢报警，因为监控里只有我进过那间屋子。钥匙没有交给雇主，我把它藏进了你拍下的箱子内衬。你是合法买家，他如果碰你的箱子，就会留下新的记录。现在你也被卷进来了。不要相信任何高价收购箱子附件的人，也不要告诉别人钥匙在你手里。",
+      kind: "story",
+      read: false
+    });
+    story.oldFoxContacted = true;
+    story.oldFoxContactDay = mailDay;
+    story.k12SearchCount = Math.max(2, Number(story.k12SearchCount) || 0);
+    story.lockerUnlocked = true;
+    if (!story.lockerNoticeShown) {
+      state.folderNotice = {
+        id: `folder_notice_${Date.now().toString(36)}`,
+        message: "旧车站寄存柜的关键信息已经可以查询，请打开文件夹核对线索。"
+      };
+      story.lockerNoticeShown = true;
+    }
+    if (state.buyerChat?.buyer?.id === "old_fox") {
+      state.buyerChat = null;
+      state.activeListingId = null;
+      state.buyerArrivalAt = null;
+    }
+    state.lastMessage = "旧货狐狸发来了一封解释邮件。";
+    return;
+  }
+  if (type === "zhao_offer") {
+    story.storyEmails.unshift({
+      id: `story_mail_zhao_${state.day}`,
+      sender: "神秘的买家",
+      sentAt: `第 ${state.day} 天 09:00`,
+      subject: "关于你店里的特殊藏品",
+      body:
+        "我注意你店里有一组来源特殊的私人藏品。钥匙、照片、手写便条和其他附件，我都可以全部买入，价格高于市场价。只要你愿意出售，过去的事情不会再有人追问。",
+      kind: "story",
+      read: false,
+      actions: [
+        { id: "zhao_accept", label: "出售全部特殊藏品" },
+        { id: "zhao_refuse", label: "拒绝交易并保留证据" }
+      ]
+    });
+    state.lastMessage = "一位神秘买家发来了一封高价收购邮件。";
+  }
+}
+
+function maybePublishMainStoryNews() {
+  const story = state.mainStory;
+  if (!story.keyFound || story.newsPublished) return;
+  if (!story.emailReceived) deliverMainStoryEmail("zhou_initial");
+  story.newsPublished = true;
+  story.newsDay = state.day;
+  story.oldFoxDueDay = Math.max(5, state.day);
+  story.stage = "news";
+  state.news = [
+    {
+      id: `story_news_death_${state.day}`,
+      title: "本地收藏家周棠被发现死于家中",
+      effect: "警方推测死亡时间：19:00",
+      detail:
+        "今日上午，警方在收藏家周棠住所内发现其遗体。经初步勘验，推测死亡时间为昨晚 19:00 左右，案件正在进一步调查中。",
+      duration: "案件新闻",
+      storyNews: true,
+      highlightTerms: ["19:00", "20:00"]
+    }
+  ];
+  state.newsVisible = true;
+  state.newsRead = false;
+  state.nextNewsTime = DAY_START;
+}
+
+function solveMainStoryAct3() {
+  const story = state.mainStory;
+  if (story.act3Solved) return;
+  story.act3Solved = true;
+  story.stage = "act3";
+  state.folderCaseStage = Math.max(3, state.folderCaseStage);
+  state.universalUnlockStage = Math.max(3, state.universalUnlockStage);
+  state.lastMessage =
+    "照片、新闻和赵衡回收附件的交易记录已经组成完整证据链。";
+}
+
 function maybeCreateThreatEvent() {
   if (state.ending || state.threatEvent || state.threatResolvedCount >= 5) return;
   state.threatSchedule ??= createThreatSchedule(Math.max(2, state.day));
@@ -4198,6 +4734,17 @@ function restoreListingItem(listing) {
   const item = JSON.parse(JSON.stringify(listing.itemSnapshot));
   item.status = item.searched ? "researched" : "viewed";
   state.inventory.unshift(item);
+}
+
+function activateScheduledListings() {
+  state.listings.forEach((listing) => {
+    if (
+      listing.status === "scheduled" &&
+      listing.listingDay <= state.day
+    ) {
+      listing.status = "active";
+    }
+  });
 }
 
 function commit() {

@@ -236,6 +236,36 @@ input:focus-visible {
   background: rgba(0, 0, 128, 0.42);
 }
 
+.desktop-icon.has-mail-notice,
+.dock-button.has-mail-notice {
+  animation: mailNotice 800ms steps(2, end) infinite;
+}
+
+.desktop-icon.has-folder-notice,
+.dock-button.has-folder-notice {
+  animation: folderNotice 900ms steps(2, end) infinite;
+}
+
+@keyframes folderNotice {
+  0%,
+  100% {
+    filter: none;
+  }
+  50% {
+    filter: brightness(1.7) drop-shadow(0 0 7px #ffb347);
+  }
+}
+
+@keyframes mailNotice {
+  0%,
+  100% {
+    filter: none;
+  }
+  50% {
+    filter: brightness(1.8) drop-shadow(0 0 6px #ffe45d);
+  }
+}
+
 .desktop-icon > span:last-child {
   max-width: 96px;
   overflow-wrap: anywhere;
@@ -1526,9 +1556,65 @@ input:focus-visible {
 }
 
 .mail-preview {
-  padding: 12px;
   border: 2px inset var(--win-gray);
   background: #fff;
+}
+
+.mail-message-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mail-summary {
+  position: relative;
+  width: 100%;
+  padding: 10px 11px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mail-summary:hover {
+  background: #edf2ff;
+}
+
+.mail-summary small {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #666;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-unread-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c51f1f;
+}
+
+.mail-preview.is-expanded {
+  border-color: #000080;
+}
+
+.mail-expanded-body {
+  padding: 0 11px 12px;
+}
+
+.mail-expanded-body h3 {
+  margin-top: 4px;
+}
+
+.story-mail-actions {
+  display: flex;
+  margin-top: 10px;
+  gap: 7px;
+  flex-wrap: wrap;
 }
 
 .mail-preview h3 {
@@ -1586,6 +1672,13 @@ input:focus-visible {
 
 .calendar-day.is-trend {
   background: #eaf1cc;
+}
+
+.calendar-day.is-current-day {
+  outline: 3px solid #d08a1f;
+  outline-offset: -3px;
+  background: #fff0b8;
+  font-weight: 700;
 }
 
 .calendar-day.is-due {
@@ -2366,6 +2459,10 @@ input:focus-visible {
   background: #8e1515;
 }
 
+.ending-overlay.is-ne .ending-type {
+  background: #8a6515;
+}
+
 .ending-window h1 {
   margin: 0;
   font-size: clamp(26px, 5vw, 42px);
@@ -2636,6 +2733,39 @@ input:focus-visible {
 .idle-sleep-popup p {
   display: block;
 }
+
+.folder-notice-toast {
+  position: absolute;
+  z-index: 84;
+  right: 12px;
+  bottom: calc(var(--taskbar-height) + 18px);
+  display: grid;
+  width: min(440px, calc(100vw - 24px));
+  padding: 0 12px 12px;
+  gap: 9px;
+  border: 3px double #8a6515;
+  background: #fff2b8;
+  box-shadow: 5px 6px 0 rgba(0, 0, 0, 0.32);
+}
+
+.folder-notice-toast.has-news {
+  bottom: calc(var(--taskbar-height) + 300px);
+}
+
+.folder-notice-toast > header {
+  display: flex;
+  margin: 0 -12px;
+  padding: 6px 8px;
+  align-items: center;
+  justify-content: space-between;
+  color: #fff;
+  background: #8a6515;
+}
+
+#folder-notice-content {
+  line-height: 1.55;
+}
+
 
 .idle-sleep-popup p {
   margin: 8px 0 12px;
@@ -3210,6 +3340,16 @@ input:focus-visible {
   text-align: center;
 }
 
+.auction-box-card.is-story-box {
+  border-color: #8e1515;
+  background: #ffe1d9;
+  box-shadow: inset 0 0 0 4px #d7a344;
+}
+
+.auction-box-card.is-story-box .box-pixel-art {
+  filter: sepia(0.8) saturate(1.4) hue-rotate(320deg);
+}
+
 .box-pixel-art {
   width: 82px;
   height: 62px;
@@ -3469,6 +3609,12 @@ input:focus-visible {
   background: #f8dddd;
 }
 
+.inventory-card.story-inventory-box {
+  border: 3px double #8e1515;
+  background: #fff0bd;
+  box-shadow: inset 0 0 0 3px #d7a344;
+}
+
 .contraband-badge {
   display: inline-block;
   margin-bottom: 8px;
@@ -3592,6 +3738,40 @@ button.keyword-chip {
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 10px;
+}
+
+.inventory-card.clue-inventory-item {
+  border-color: #8e1515;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(142, 21, 21, 0.035) 0 2px,
+      transparent 2px 5px
+    ),
+    #fff5d6;
+  box-shadow: inset 0 0 0 3px #d8b23f;
+}
+
+.clue-inventory-badge {
+  display: inline-block;
+  margin-bottom: 9px;
+  padding: 3px 7px;
+  border: 2px solid #8e1515;
+  color: #fff;
+  background: #8e1515;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.clue-retain-button {
+  width: 100%;
+  min-height: 38px;
+  border: 3px double #8e1515;
+  color: #7a1212;
+  background: #ffe46a;
+  font-size: 15px;
+  font-weight: 900;
+  animation: guidePulse 900ms steps(2, end) infinite;
 }
 
 .item-cost-line {
@@ -3832,6 +4012,10 @@ button.keyword-chip {
   color: #000080;
 }
 
+.status-scheduled {
+  color: #8a6515;
+}
+
 .status-sold {
   color: #17652d;
 }
@@ -4044,6 +4228,152 @@ button.keyword-chip {
   gap: 4px;
   border-left: 5px solid #8d6b16;
   background: #fff5ce;
+}
+
+.k12-dossier {
+  display: grid;
+  padding: 12px;
+  gap: 7px;
+  border: 3px double #6d1647;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(109, 22, 71, 0.04) 0 2px,
+      transparent 2px 5px
+    ),
+    #f4edf1;
+}
+
+.k12-code {
+  justify-self: start;
+  padding: 3px 8px;
+  color: #fff;
+  background: #6d1647;
+  font-family: "Courier New", monospace;
+  font-weight: 700;
+}
+
+.k12-dossier p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.main-story-panel {
+  display: grid;
+  margin-bottom: 12px;
+  padding: 11px 12px;
+  gap: 8px;
+  border: 3px double #6d1647;
+  background: #f5edf4;
+}
+
+.main-story-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.main-story-panel > header span {
+  color: #6d1647;
+  font-weight: 700;
+}
+
+.main-story-evidence {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.main-story-evidence span {
+  padding: 6px;
+  border: 1px solid #a98ba0;
+  background: #fff;
+  text-align: center;
+}
+
+.main-story-evidence span.is-complete {
+  border-color: #17652d;
+  color: #17652d;
+  background: #e0f3e3;
+}
+
+.main-story-choices,
+.main-story-resolved {
+  display: grid;
+  padding: 8px;
+  gap: 5px;
+  border: 2px inset var(--win-gray);
+  background: #fff;
+}
+
+.story-clue-viewer {
+  display: grid;
+  margin-bottom: 0;
+  padding: 11px 12px;
+  gap: 10px;
+  border: 3px double #8e1515;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(142, 21, 21, 0.035) 0 2px,
+      transparent 2px 5px
+    ),
+    #fff1ed;
+}
+
+.story-clue-viewer .eyebrow {
+  color: #8e1515;
+}
+
+.story-clue-viewer > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.story-clue-viewer-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.story-clue-copy {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  line-height: 1.6;
+}
+
+.story-clue-tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.story-clue-tags span {
+  padding: 3px 6px;
+  border: 1px solid #9b8b4a;
+  background: #fff4a8;
+}
+
+.story-clue-result {
+  display: grid;
+  padding: 8px 9px;
+  gap: 4px;
+  border-left: 4px solid #8e1515;
+  background: #fff;
+}
+
+.story-clue-result p {
+  margin: 0;
+}
+
+.story-clue-actions {
+  display: flex;
+  padding-top: 2px;
+  justify-content: flex-end;
 }
 
 .search-fact {
@@ -4354,6 +4684,11 @@ button.keyword-chip {
   gap: 9px;
 }
 
+.folder-item-block {
+  display: grid;
+  gap: 8px;
+}
+
 .folder-effect-note {
   margin-bottom: 11px;
   padding: 10px 12px;
@@ -4556,7 +4891,8 @@ button.keyword-chip {
 
 @media (max-width: 760px) {
   .inspection-main,
-  .buyer-workspace {
+  .buyer-workspace,
+  .story-clue-viewer-body {
     grid-template-columns: 1fr;
   }
 

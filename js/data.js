@@ -363,6 +363,8 @@ export const STAGE_TWO_DATA = {
       sellable: false,
       clueStage: 1,
       description: "纸边已经发脆，编号处残留着被水浸过的蓝色墨迹。",
+      investigationText:
+        "收据上的 K-12 不是普通物品编号，而是旧车站长期寄存柜的登记编号。褪色印章与周棠私人收藏箱内的托运痕迹属于同一批次。",
       keywords: ["K-12", "褪色印章"]
     },
     {
@@ -373,6 +375,8 @@ export const STAGE_TWO_DATA = {
       sellable: false,
       clueStage: 2,
       description: "目的地一栏被撕掉了，背面写着一串很轻的日期。",
+      investigationText:
+        "缺角旧车票的纸张和印色与十年前的旧车站票根一致。背面日期对应钟表店旧案发生后的第三天。",
       keywords: ["旧车站", "残缺日期"]
     }
   ],
@@ -755,10 +759,11 @@ export const STAGE_TWO_DATA = {
     {
       id: "mystery_buyer",
       type: "mystery_buyer",
-      name: "神秘买家",
+      name: "匿名收购客",
       dayRange: [8, 12],
-      message: "神秘买家只对来源特殊的物品感兴趣，报价很高，但不会留下记录。",
-      acceptLabel: "秘密交易",
+      message:
+        "一位匿名收购客只对来源特殊的物品感兴趣。他会高价收走一件特殊藏品，但不会解释自己的身份。",
+      acceptLabel: "出售特殊藏品",
       declineLabel: "拒绝交易"
     }
   ],
@@ -940,7 +945,177 @@ export const STAGE_TWO_DATA = {
       subtitle: "违禁品交易链被查获",
       text:
         "尾款、聊天记录和仓库单据被拼成了完整证据链。你没能等到下一场拍卖，账户与店铺一起被查封。"
+    },
+    main_police: {
+      type: "HE",
+      title: "旧案归宗",
+      subtitle: "公开证据并交给警方",
+      text:
+        "赵衡的死亡记录被撤销，十年前旧案重新审理。旧货狐狸承担入室盗窃责任，但没有被认定为杀人犯。"
+    },
+    main_zhao: {
+      type: "BE",
+      title: "沉默的真相",
+      subtitle: "把钥匙卖给赵衡",
+      text:
+        "钥匙和证据被销毁。债务暂时减轻，但赵衡仍以不存在的身份生活，并随时可能再次找上你。"
+    },
+    main_investigator: {
+      type: "NE",
+      title: "调查线的无名一环",
+      subtitle: "交给调查机构",
+      text:
+        "旧案重新启动，你也得到一条稳定的人脉。赵衡没有立刻落网，但调查机构开始记录他每一次新的交易。"
+    },
+    main_blackmail: {
+      type: "BE",
+      title: "成为交易链的一部分",
+      subtitle: "长期威胁赵衡",
+      text:
+        "你开始替赵衡处理那些不能留下名字的交易。收入稳定了，但店铺也从此不再完全属于你。"
     }
+  },
+  mainStory: {
+    startDay: 4,
+    specialBox: {
+      id: "story_zhou_collection_box",
+      destination: "城南旧宅 · 私人寄售",
+      appearance: "私人收藏旧物箱",
+      appearanceDescription:
+        "深色箱体贴着旧收藏封条，边角有反复搬运留下的擦痕。它和普通失物箱明显不同。",
+      startingPrice: 320,
+      storyBox: true,
+      competitors: [
+        {
+          id: "rival_story_zhou",
+          name: "铁皮箱老周",
+          budget: 430,
+          aggression: 0.42
+        },
+        {
+          id: "rival_story_mimi",
+          name: "不眨眼咪咪",
+          budget: 520,
+          aggression: 0.58
+        }
+      ],
+      items: [
+        {
+          id: "zhou_old_camera",
+          name: "周棠的旧相机",
+          category: "common",
+          baseValue: 420,
+          onsitePrice: 310,
+          originNpc: "zhou_tang",
+          description: "背带已经磨白，最后几张照片被单独取走过。",
+          keywords: ["旧式镜头", "私人收藏"]
+        },
+        {
+          id: "zhou_collection_note",
+          name: "收藏整理便签",
+          category: "common",
+          baseValue: 180,
+          onsitePrice: 120,
+          originNpc: "zhou_tang",
+          description: "便签列出了几只箱子的去向，最后一行被水浸开了。",
+          keywords: ["手写便签", "个人收藏"]
+        },
+        {
+          id: "mysterious_key",
+          name: "神秘的钥匙",
+          category: "collection",
+          baseValue: 0,
+          onsitePrice: 0,
+          originNpc: "zhou_tang",
+          clue: true,
+          sellable: false,
+          hiddenInLining: true,
+          description:
+            "钥匙表面刻着 K-12，边缘留有被匆忙塞进内衬时产生的划痕。",
+          investigationText:
+            "万物通没有把 K-12 归入普通商品编号。它更接近旧车站长期寄存柜的登记编号。周棠把钥匙藏进箱子，说明这枚编号背后还有一份尚未取出的资料。",
+          keywords: ["K-12", "模糊刻印"]
+        }
+      ]
+    },
+    evidenceItems: [
+      {
+        id: "old_case_photo",
+        name: "十年前旧案照片",
+        category: "collection",
+        clue: true,
+        sellable: false,
+        description: "照片拍下了旧案现场和一名尚未确认身份的男人。",
+        investigationText:
+          "照片拍摄于十年前钟表店旧案现场，背景中的男人与近期照片中的赵衡面部特征一致。它在时间上早于赵衡被登记死亡。",
+        keywords: ["旧案现场", "钟表店"]
+      },
+      {
+        id: "zhao_recent_photo",
+        name: "赵衡近期照片",
+        category: "collection",
+        clue: true,
+        sellable: false,
+        description: "照片中的男人年纪更大，但面部特征与旧案照片一致。",
+        investigationText:
+          "近期照片与十年前的旧案照片指向同一个人。结合赵衡在审判前被登记死亡，可以判断照片中的人仍在使用新的身份活动。",
+        keywords: ["近期照片", "赵衡"]
+      },
+      {
+        id: "zhou_handwritten_note",
+        name: "周棠手写便条",
+        category: "collection",
+        clue: true,
+        sellable: false,
+        description: "纸张只有一句话：他没有死。",
+        investigationText:
+          "周棠亲手写下“他没有死”。结合两张照片与赵衡的死亡登记时间，这句话指向同一结论：赵衡仍然活着。",
+        keywords: ["手写便条", "他没有死"]
+      }
+    ],
+    zhaoBuyer: {
+      id: "zhao_heng",
+      displayId: "旧藏-410",
+      name: "赵衡",
+      avatar: "ledger",
+      initialTrust: 68,
+      style: "只关心收藏附件的完整度",
+      voice: "克制、简短",
+      preference: "原包装、手写纸条、老照片",
+      verificationFocus: ["packaging", "source", "owner"],
+      verificationRate: 0.2,
+      deceptionReward: 2,
+      questionLead: "",
+      questionSuffix: "",
+      opening:
+        "我收旧收藏的附件，原包装、手写纸条、老照片都可以。价格不是问题。",
+      resultFeedback: {
+        accepted: "附件齐全，这批东西我收。",
+        rejected: "缺少能证明来历的附件，这次算了。"
+      }
+    },
+    choices: [
+      {
+        id: "police",
+        label: "公开证据并交给警方",
+        endingId: "main_police"
+      },
+      {
+        id: "zhao",
+        label: "把钥匙卖给赵衡",
+        endingId: "main_zhao"
+      },
+      {
+        id: "investigator",
+        label: "交给调查机构",
+        endingId: "main_investigator"
+      },
+      {
+        id: "blackmail",
+        label: "长期威胁赵衡",
+        endingId: "main_blackmail"
+      }
+    ]
   },
   riskPhrases: [
     "我保证",

@@ -3,8 +3,8 @@ import {
   CONFIG,
   DESKTOP_APPS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260923-07";
-import { Game, formatCurrency } from "./game.js?v=20260923-07";
+} from "./data.js?v=20260923-17";
+import { Game, formatCurrency } from "./game.js?v=20260923-17";
 
 let root;
 let workspace;
@@ -21,6 +21,8 @@ let newsMinimized = false;
 let lastNewsId = null;
 let dismissedBuyerId = null;
 let newsExpanded = false;
+let expandedMailId = "broker_initial";
+let storyClueViewerId = null;
 const inspectionState = {
   itemId: null,
   returnTab: "inventory",
@@ -125,6 +127,8 @@ function renderStartScreen() {
   uiScreen = "MENU";
   isPaused = false;
   windowState.clear();
+  expandedMailId = "broker_initial";
+  storyClueViewerId = null;
   closeInspection();
   activeWindowId = null;
   root.innerHTML = `
@@ -177,6 +181,8 @@ function renderNicknameScreen() {
   uiScreen = "NICKNAME";
   isPaused = false;
   windowState.clear();
+  expandedMailId = "broker_initial";
+  storyClueViewerId = null;
   closeInspection();
   root.innerHTML = `
     <section class="desktop menu-desktop">
@@ -322,6 +328,15 @@ function renderDesktop() {
           <button type="button" class="legacy-button primary" data-action="idle-sleep">立即休眠</button>
           <button type="button" class="legacy-button" data-action="dismiss-idle-sleep">继续查看</button>
         </div>
+      </aside>
+
+      <aside class="folder-notice-toast is-hidden" id="folder-notice-toast" aria-live="polite">
+        <header>
+          <strong>案件档案更新</strong>
+          <button type="button" data-action="dismiss-folder-notice" aria-label="关闭档案提醒">×</button>
+        </header>
+        <div id="folder-notice-content"></div>
+        <button type="button" class="legacy-button primary" data-open-app="folder">打开文件夹</button>
       </aside>
 
       <nav class="dock" aria-label="快速启动">
@@ -542,7 +557,6 @@ function renderDesktop() {
 
       <div class="ending-overlay is-hidden" id="ending-overlay">
         <section class="ending-window">
-          <span class="ending-type" id="ending-type"></span>
           <h1 id="ending-title"></h1>
           <strong id="ending-subtitle"></strong>
           <p id="ending-copy"></p>
@@ -721,6 +735,25 @@ function handleClick(event) {
     dismissedBuyerId = Game.getState().buyerChat?.id ?? null;
     refreshFromState();
   }
+  if (action === "select-mail") {
+    const mailId = actionButton.dataset.mailId;
+    expandedMailId = expandedMailId === mailId ? null : mailId;
+    Game.markStoryEmailRead(mailId);
+    refreshFromState();
+  }
+  if (action === "story-mail-action") {
+    if (choice === "zhao_accept") {
+      Game.resolveZhaoOffer("accept");
+    }
+    if (choice === "zhao_refuse") {
+      Game.resolveZhaoOffer("refuse");
+    }
+    refreshFromState();
+  }
+  if (action === "dismiss-folder-notice") {
+    Game.getState().folderNotice = null;
+    refreshFromState();
+  }
   if (action === "view-buyer") {
     Game.markBuyerRead();
     openApp("shop");
@@ -792,6 +825,12 @@ function handleClick(event) {
     }
     refreshFromState();
   }
+  if (action === "pay-off-all-debt") {
+    if (!Game.payOffAllDebt()) {
+      announce("当前现金不足，暂时无法一次性还清全部贷款。");
+    }
+    refreshFromState();
+  }
   if (action === "dismiss-payment-notice") {
     Game.dismissPaymentNotice();
     refreshFromState();
@@ -838,7 +877,11 @@ function handleClick(event) {
   if (action === "inspection-back") {
     const returnTab = inspectionState.returnTab;
     closeInspection();
-    Game.getState().activeShopTab = returnTab;
+    if (returnTab === "folder") {
+      openApp("folder");
+    } else {
+      Game.getState().activeShopTab = returnTab;
+    }
     refreshFromState();
   }
   if (action === "inspection-tool") {
@@ -882,6 +925,20 @@ function handleClick(event) {
     };
     inspectionState.researchOpen = true;
     inspectionState.researchTab = "archive";
+    refreshFromState();
+  }
+  if (action === "main-open-locker") {
+    if (Game.openMainStoryLocker()) {
+      inspectionState.researchResult = null;
+    }
+    refreshFromState();
+  }
+  if (action === "main-story-combine") {
+    Game.combineMainStoryEvidence();
+    refreshFromState();
+  }
+  if (action === "main-story-choice") {
+    Game.resolveMainStoryChoice(choice);
     refreshFromState();
   }
   if (action === "visitor-choice") {
@@ -945,6 +1002,23 @@ function handleClick(event) {
     if (listing?.itemSnapshot) {
       openInspection(listing.itemSnapshot.id, "listings", listing.id);
     }
+    refreshFromState();
+  }
+  if (action === "view-folder-item") {
+    if (isDirectClueItem(itemId)) {
+      storyClueViewerId = itemId;
+    } else {
+      openInspection(itemId, "folder");
+    }
+    refreshFromState();
+    if (storyClueViewerId === itemId) {
+      document
+        .querySelector(`[data-story-clue-viewer="${itemId}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  }
+  if (action === "close-story-clue") {
+    storyClueViewerId = null;
     refreshFromState();
   }
   if (action === "unlist-listing") {
@@ -1569,13 +1643,14 @@ function syncDesktopState() {
   const visitorContent = document.querySelector("#visitor-overlay-content");
   const arrestOverlay = document.querySelector("#arrest-overlay");
   const endingOverlay = document.querySelector("#ending-overlay");
-  const endingType = document.querySelector("#ending-type");
   const endingTitle = document.querySelector("#ending-title");
   const endingSubtitle = document.querySelector("#ending-subtitle");
   const endingCopy = document.querySelector("#ending-copy");
   const endingStats = document.querySelector("#ending-stats");
   const tradeOverlay = document.querySelector("#trade-feedback-overlay");
   const tradeContent = document.querySelector("#trade-feedback-content");
+  const folderNoticeToast = document.querySelector("#folder-notice-toast");
+  const folderNoticeContent = document.querySelector("#folder-notice-content");
   const guidePopup = document.querySelector("#beginner-guide");
   const guideStep = document.querySelector("#beginner-guide-step");
   const guideTitle = document.querySelector("#beginner-guide-title");
@@ -1586,6 +1661,22 @@ function syncDesktopState() {
   root.querySelectorAll('[data-app-badge="shop"]').forEach((badge) => {
     badge.classList.toggle("is-hidden", !state.buyerChat?.unread);
   });
+  const hasUnreadStoryMail = (state.mainStory?.storyEmails ?? []).some(
+    (mail) => !mail.read
+  );
+  root.querySelectorAll('[data-open-app="mail"]').forEach((button) => {
+    button.classList.toggle("has-mail-notice", hasUnreadStoryMail);
+  });
+  const hasFolderNotice = Boolean(state.folderNotice);
+  root.querySelectorAll('[data-open-app="folder"]').forEach((button) => {
+    button.classList.toggle("has-folder-notice", hasFolderNotice);
+  });
+  if (folderNoticeToast && folderNoticeContent) {
+    folderNoticeToast.classList.toggle("is-hidden", !hasFolderNotice);
+    if (hasFolderNotice) {
+      folderNoticeContent.textContent = state.folderNotice.message;
+    }
+  }
 
   root.querySelectorAll("[data-open-app]").forEach((button) => {
     button.classList.toggle(
@@ -1661,16 +1752,27 @@ function syncDesktopState() {
       newsContent.innerHTML = newsExpanded
         ? `
           <strong class="key-info">${escapeHtml(news.title)}</strong>
-          <p>${escapeHtml(news.detail ?? news.effect).replace(
-            "平台提醒：",
-            '<span class="key-alert">平台提醒：</span>'
-          )}</p>
+          <p>${
+            news.highlightTerms?.length
+              ? renderHighlightedText(
+                  news.detail ?? news.effect,
+                  news.highlightTerms
+                )
+              : escapeHtml(news.detail ?? news.effect).replace(
+                  "平台提醒：",
+                  '<span class="key-alert">平台提醒：</span>'
+                )
+          }</p>
           <small>${escapeHtml(news.duration)}</small>
           <button type="button" class="legacy-button" data-action="back-news">返回</button>
         `
         : `
           <strong>${escapeHtml(news.title)}</strong>
-          <p>${escapeHtml(news.effect)}</p>
+          <p>${
+            news.highlightTerms?.length
+              ? renderHighlightedText(news.effect, news.highlightTerms)
+              : escapeHtml(news.effect)
+          }</p>
           <small>${escapeHtml(news.duration)}</small>
           <button type="button" class="legacy-button primary" data-action="view-news">查看</button>
         `;
@@ -1682,6 +1784,11 @@ function syncDesktopState() {
       );
     }
   }
+
+  folderNoticeToast?.classList.toggle(
+    "has-news",
+    Boolean(newsPopup && !newsPopup.classList.contains("is-hidden"))
+  );
 
   if (buyerPopup && buyerPopupContent) {
     const chat = state.buyerChat;
@@ -2050,7 +2157,6 @@ function syncDesktopState() {
 
   if (
     endingOverlay &&
-    endingType &&
     endingTitle &&
     endingSubtitle &&
     endingCopy &&
@@ -2066,8 +2172,11 @@ function syncDesktopState() {
       "is-be",
       ending?.type === "BE"
     );
+    endingOverlay.classList.toggle(
+      "is-ne",
+      ending?.type === "NE"
+    );
     if (ending) {
-      endingType.textContent = ending.type;
       endingTitle.textContent = ending.title;
       endingSubtitle.textContent = ending.subtitle;
       endingCopy.textContent = ending.text;
@@ -2150,6 +2259,19 @@ function getWindowTitle(appId) {
 
 function renderMailApp() {
   const state = Game.getState();
+  const storyMails = state.mainStory?.storyEmails ?? [];
+  const messages = [
+    ...storyMails,
+    {
+      id: "broker_initial",
+      sender: CONFIG.brokerName,
+      sentAt: "系统消息",
+      subject: `您好，亲爱的 ${state.nickname || "朋友"}！`,
+      kind: "broker",
+      preview: `感谢您选择${CONFIG.brokerName}。您的经营贷款已经审核通过。`,
+      read: true
+    }
+  ];
   return `
     <div class="legacy-toolbar"><span>文件</span><span>编辑</span><span>查看</span><span>帮助</span></div>
     <div class="mail-layout">
@@ -2160,28 +2282,110 @@ function renderMailApp() {
         <span>已删除</span>
       </aside>
       <section class="mail-list">
-        <div class="mail-list-head"><strong>收件箱</strong><span>1 封邮件</span></div>
-        <article class="mail-preview">
-          <header><span>${escapeHtml(CONFIG.brokerName)}</span><time>系统消息</time></header>
-          <h3>您好，亲爱的 ${escapeHtml(state.nickname || "朋友")}！</h3>
-          <p>感谢您选择${escapeHtml(
-            CONFIG.brokerName
-          )}。您的经营贷款已经审核通过，账户与失物拍卖权限现已激活。</p>
-          <p><span class="key-info">首期还款信息已经写入日历。</span>建议您通过关键词搜索、标签定价和买家沟通提高收益。</p>
-          <div class="mail-meta">
-            <span>总债务</span><strong class="key-expense">${formatCurrency(Game.getState().totalDebt)}</strong>
-          </div>
-          <div class="mail-terms">
-            <span>首期还款：<b class="key-expense">${formatCurrency(
-              state.nextPayment.amount
-            )}</b></span>
-            <span>还款日：<b class="key-info">第 ${
-              state.nextPayment.dueDay
-            } 天</b></span>
-            <span>还款周期：每 ${CONFIG.paymentIntervalDays} 天</span>
-            <span class="key-alert">连续三次逾期将终止账户。</span>
-          </div>
-        </article>
+        <div class="mail-list-head"><strong>收件箱</strong><span>${
+          messages.length
+        } 封邮件</span></div>
+        <div class="mail-message-list">
+        ${messages
+          .map(
+            (mail) => {
+              const expanded = expandedMailId === mail.id;
+              const preview =
+                mail.preview ??
+                String(mail.body ?? "").split(/[。！？]/)[0] + "。";
+              return `
+              <article class="mail-preview ${
+                expanded ? "is-expanded" : "is-collapsed"
+              } ${mail.kind === "story" ? "story-mail" : ""}">
+                <button
+                  type="button"
+                  class="mail-summary"
+                  data-action="select-mail"
+                  data-mail-id="${escapeHtml(mail.id)}"
+                >
+                  <header>
+                    <span>${escapeHtml(mail.sender)}</span>
+                    <time class="${
+                      mail.kind === "story" ? "key-alert" : ""
+                    }">${escapeHtml(mail.sentAt)}</time>
+                  </header>
+                  ${
+                    !expanded
+                      ? `<small>${escapeHtml(preview)}</small>`
+                      : ""
+                  }
+                  ${
+                    !mail.read
+                      ? `<i class="mail-unread-dot" aria-label="未读邮件"></i>`
+                      : ""
+                  }
+                </button>
+                ${
+                  expanded
+                    ? mail.kind === "broker"
+                      ? `<div class="mail-expanded-body">
+                          <h3>${escapeHtml(mail.subject)}</h3>
+                          <p>感谢您选择${escapeHtml(
+                            CONFIG.brokerName
+                          )}。您的经营贷款已经审核通过，账户与失物拍卖权限现已激活。</p>
+                          <p><span class="key-info">首期还款信息已经写入日历。</span>建议您通过关键词搜索、标签定价和买家沟通提高收益。</p>
+                          <div class="mail-meta">
+                            <span>总债务</span><strong class="key-expense">${formatCurrency(
+                              state.totalDebt
+                            )}</strong>
+                          </div>
+                          <div class="mail-terms">
+                            <span>首期还款：<b class="key-expense">${formatCurrency(
+                              state.nextPayment.amount
+                            )}</b></span>
+                            <span>还款日：<b class="key-info">第 ${
+                              state.nextPayment.dueDay
+                            } 天</b></span>
+                            <span>还款周期：每 ${
+                              CONFIG.paymentIntervalDays
+                            } 天</span>
+                            <span class="key-alert">连续三次逾期将终止账户。</span>
+                          </div>
+                        </div>`
+                      : `<div class="mail-expanded-body">
+                          <h3>${escapeHtml(mail.subject)}</h3>
+                          <p>${renderHighlightedText(mail.body, [
+                            "20:00",
+                            "22:00",
+                            "K-12"
+                          ])}</p>
+                          ${
+                            mail.actions?.length &&
+                            !state.mainStory?.zhaoOfferResolved
+                              ? `<div class="story-mail-actions">
+                                  ${mail.actions
+                                    .map(
+                                      (choice) => `
+                                        <button
+                                          type="button"
+                                          class="legacy-button ${
+                                            choice.id === "zhao_accept"
+                                              ? "primary"
+                                              : ""
+                                          }"
+                                          data-action="story-mail-action"
+                                          data-choice="${choice.id}"
+                                        >${escapeHtml(choice.label)}</button>
+                                      `
+                                    )
+                                    .join("")}
+                                </div>`
+                              : ""
+                          }
+                        </div>`
+                    : ""
+                }
+              </article>
+            `;
+            }
+          )
+          .join("")}
+        </div>
       </section>
     </div>
   `;
@@ -2206,7 +2410,7 @@ function renderCalendarApp() {
         overdue && day === dueDay ? "is-overdue" : ""
       } ${day < state.day ? "is-muted" : ""} ${
         trendActive ? "is-trend" : ""
-      }">
+      } ${day === state.day ? "is-current-day" : ""}">
         ${day}
         <span class="calendar-day-labels">
           ${day === dueDay ? `<small>${overdue ? "已逾期" : "还款"}</small>` : ""}
@@ -2304,6 +2508,22 @@ function renderCalendarApp() {
         <button
           type="button"
           class="legacy-button"
+          data-action="pay-off-all-debt"
+          ${
+            state.totalDebt <= 0 || state.cash < state.totalDebt
+              ? "disabled"
+              : ""
+          }
+        >${
+          state.totalDebt <= 0
+            ? "贷款已全部结清"
+            : state.cash < state.totalDebt
+              ? `一次性还清需 ${formatCurrency(state.totalDebt)}`
+              : `一次性还清 ${formatCurrency(state.totalDebt)}`
+        }</button>
+        <button
+          type="button"
+          class="legacy-button"
           data-action="take-loan"
           ${state.loanTakenToday ? "disabled" : ""}
         >${state.loanTakenToday ? "今日已借款" : "应急贷款 +¥1,000"}</button>
@@ -2355,7 +2575,9 @@ function renderAuctionApp() {
       <div class="auction-shell">
         <section class="auction-list-pane">
           <header><strong>今日批次</strong><span>第 1 箱</span></header>
-          <div class="auction-box-card">
+          <div class="auction-box-card ${
+            auction.storyBox ? "is-story-box" : ""
+          }">
             <div class="box-pixel-art" aria-hidden="true"></div>
             <strong>${escapeHtml(auction.destination)}</strong>
             <span>${escapeHtml(auction.appearance)}</span>
@@ -2363,7 +2585,9 @@ function renderAuctionApp() {
         </section>
         <section class="auction-detail-pane">
           <div class="auction-info">
-            <p class="eyebrow">只看得到两条线索</p>
+            <p class="eyebrow">${
+              auction.storyBox ? "特殊私人寄售箱" : "只看得到两条线索"
+            }</p>
             <h2>${escapeHtml(auction.destination)} · ${escapeHtml(
               auction.appearance
             )}</h2>
@@ -2427,6 +2651,10 @@ function renderAuctionApp() {
           <span>你花了 ${formatCurrency(auction.currentPrice)}</span>
         </div>
         <div class="outcome-grid">
+          ${
+            auction.storyBox
+              ? ""
+              : `
           <button type="button" class="legacy-button outcome-button" data-action="auction-outcome" data-outcome="resale">
             <strong>原封转卖</strong>
             <span>立即让其他买家出价</span>
@@ -2435,9 +2663,15 @@ function renderAuctionApp() {
             <strong>现场开箱</strong>
             <span>所有物品立即公开出售</span>
           </button>
+          `
+          }
           <button type="button" class="legacy-button outcome-button" data-action="auction-outcome" data-outcome="home">
             <strong>带回家</strong>
-            <span>物品进入我的店铺库存</span>
+            <span>${
+              auction.storyBox
+                ? "私人收藏箱必须带回店铺处理"
+                : "物品进入我的店铺库存"
+            }</span>
           </button>
         </div>
       </div>
@@ -2620,7 +2854,9 @@ function renderShopTab(tab) {
   }
 
   if (tab === "listings") {
-    const listings = state.listings.filter((listing) => listing.status === "active");
+    const listings = state.listings.filter((listing) =>
+      ["active", "scheduled"].includes(listing.status)
+    );
     return `
       <section class="shop-content full-span">
         ${
@@ -2670,6 +2906,11 @@ function findItemForInspection(itemId) {
   );
 }
 
+function isDirectClueItem(itemId) {
+  const item = findItemForInspection(itemId);
+  return Boolean(item?.clue);
+}
+
 function getItemVisualProfile(item) {
   const key = `${item?.templateId ?? ""} ${item?.name ?? ""}`.toLowerCase();
   const exactProfiles = {
@@ -2707,7 +2948,13 @@ function getItemVisualProfile(item) {
     starter_lamp: "lamp",
     starter_radio: "radio",
     starter_box: "toolbox",
-    starter_camera: "camera"
+    starter_camera: "camera",
+    clue_locker_receipt: "paper",
+    clue_torn_ticket: "paper",
+    mysterious_key: "generic",
+    old_case_photo: "paper",
+    zhao_recent_photo: "paper",
+    zhou_handwritten_note: "note"
   };
   if (exactProfiles[item?.templateId]) {
     return exactProfiles[item.templateId];
@@ -2729,7 +2976,9 @@ function getItemVisualProfile(item) {
   if (/台灯|补光灯|灯|lamp/.test(key)) return "lamp";
   if (/收音机|radio/.test(key)) return "radio";
   if (/工具箱|维修|tool/.test(key)) return "toolbox";
-  if (/书|账本|文件|合同|信|纸|card|book/.test(key)) return "paper";
+  if (/书|账本|文件|合同|信|收据|票据|车票|票根|纸|card|book/.test(key)) {
+    return "paper";
+  }
   if (/药|瓶|香水|bottle/.test(key)) return "bottle";
   if (item?.category === "luxury") return "luxury";
   return "generic";
@@ -2755,6 +3004,7 @@ function renderPixelArtwork(item, profile) {
     watch: "#d6bd62",
     camera: "#555d66",
     paper: "#f0e2b5",
+    note: "#f1dfad",
     bottle: accent,
     compass: "#c99d52",
     tea: "#d0d8cf",
@@ -2815,6 +3065,20 @@ function renderPixelArtwork(item, profile) {
       <rect x="54" y="74" width="52" height="5" fill="#806d4d"/>
       <rect x="54" y="90" width="36" height="5" fill="#806d4d"/>
       <rect x="92" y="94" width="18" height="18" fill="#b44c45"/>
+    `,
+    note: `
+      <rect x="36" y="20" width="88" height="104" fill="${main}" stroke="${outline}" stroke-width="4"/>
+      <text
+        x="80"
+        y="70"
+        text-anchor="middle"
+        font-family="KaiTi, STKaiti, cursive"
+        font-size="24"
+        fill="#6f1717"
+        transform="rotate(-4 80 70)"
+      >他没有死</text>
+      <rect x="48" y="88" width="64" height="3" fill="#8d6f4a"/>
+      <rect x="58" y="100" width="44" height="3" fill="#8d6f4a"/>
     `,
     bottle: `
       <rect x="68" y="12" width="24" height="20" fill="${shadow}" stroke="${outline}" stroke-width="4"/>
@@ -2933,6 +3197,7 @@ function renderItemVisual(item, options = {}) {
     Array.isArray(item?.facts) &&
     item.facts.length > 0 &&
     item.facts.every((fact) => fact.discovered);
+  const detailLevel = Number(inspection.detailLevel) || 0;
   return `
     <div class="item-visual item-visual-${profile} ${
       compact ? "is-compact" : ""
@@ -2982,7 +3247,13 @@ function renderItemVisual(item, options = {}) {
             : ""
         }
       >
-        <span>${detailComplete ? "细节已检查" : "细节检查"}</span>
+        <span>${
+          detailComplete
+            ? "细节已检查"
+            : detailLevel > 0
+              ? `细节检查 ${detailLevel} / 2`
+              : "细节检查"
+        }</span>
       </div>
       ${
         inspection.appliedForgery
@@ -3177,11 +3448,25 @@ function renderInspectionResearchDrawer(item) {
               </div>
               ${
                 result
-                  ? `<div class="inspection-research-result">
-                      <strong>${escapeHtml(result.title)}</strong>
-                      <p>${escapeHtml(result.demand)}</p>
-                      <p>${escapeHtml(result.risk)}</p>
-                    </div>`
+                  ? result.specialArchive
+                    ? `<div class="k12-dossier">
+                        <span class="k12-code">${escapeHtml(
+                          result.archiveCode ?? "K-12"
+                        )}</span>
+                        <strong>${escapeHtml(result.title)}</strong>
+                        <p>${escapeHtml(result.demand)}</p>
+                        <p>${escapeHtml(result.risk)}</p>
+                        ${
+                          result.mainStoryAction === "open-locker"
+                            ? `<button type="button" class="legacy-button primary" data-action="main-open-locker">打开旧车站寄存柜</button>`
+                            : ""
+                        }
+                      </div>`
+                    : `<div class="inspection-research-result">
+                        <strong>${escapeHtml(result.title)}</strong>
+                        <p>${escapeHtml(result.demand)}</p>
+                        <p>${escapeHtml(result.risk)}</p>
+                      </div>`
                   : `<span class="muted-copy">点击关键词可以补充更具体的核对资料。</span>`
               }
             `
@@ -3283,15 +3568,23 @@ function renderBuyerWorkspace(chat) {
 
 function renderInventoryItem(item, index = 0) {
   const isBox = item.type === "box";
+  const isClueInventoryItem = Boolean(item.clue && item.hiddenInLining);
   const tagSource = item.unlockedTags?.length ? item.unlockedTags : item.keywords ?? [];
   const showViewGuide =
     Game.getState().guideStep === "SHOP" &&
     index === 0 &&
-    !isBox;
+    !isBox &&
+    !isClueInventoryItem;
   return `
-    <article class="inventory-card ${item.category === "special" ? "special-item" : ""}">
+    <article class="inventory-card ${
+      item.category === "special" ? "special-item" : ""
+    } ${item.storyBox ? "story-inventory-box" : ""} ${
+      isClueInventoryItem ? "clue-inventory-item" : ""
+    }">
       ${
-        item.category === "special"
+        isClueInventoryItem
+          ? `<span class="clue-inventory-badge">关键线索 · 等待归档</span>`
+          : item.category === "special"
           ? `<span class="contraband-badge">违禁物品</span>
              <div class="contraband-forgery-hint">
                有买家私下提过：包装、标签和来源文件都可能是假的，平台却很难当场看穿。
@@ -3302,7 +3595,13 @@ function renderInventoryItem(item, index = 0) {
         <span class="inventory-icon ${isBox ? "is-box" : ""}" aria-hidden="true"></span>
         <div>
           <strong>${escapeHtml(item.name)}</strong>
-          <span>${isBox ? "未打开箱子" : getItemStatusLabel(item.status)}</span>
+          <span>${
+            isBox
+              ? "未打开箱子"
+              : isClueInventoryItem
+                ? "必须先自留"
+                : getItemStatusLabel(item.status)
+          }</span>
         </div>
       </div>
       ${
@@ -3340,39 +3639,50 @@ function renderInventoryItem(item, index = 0) {
              }`
       }
       <div class="inventory-actions">
-        <div class="inventory-view-action ${showViewGuide ? "has-guide" : ""}">
-          <button type="button" class="legacy-button ${
-            showViewGuide ? "is-guided" : ""
-          }" data-action="view-item" data-item-id="${item.id}">
-            ${isBox ? "打开" : "检视"}
-          </button>
-          ${
-            showViewGuide
-              ? `<span class="inventory-view-tip">
-                  点击查看物品详情
-                  <i aria-hidden="true"></i>
-                </span>`
-              : ""
-          }
-        </div>
         ${
-          !isBox && item.status !== "listed"
-            ? item.category === "special"
-              ? `<button
-                   type="button"
-                   class="legacy-button"
-                   data-action="prepare-listing"
-                   data-item-id="${item.id}"
-                 >上架</button>
-                 <button type="button" class="legacy-button" data-action="report-special" data-item-id="${item.id}">上报</button>`
-              : `<button
+          isClueInventoryItem
+            ? `<button
                  type="button"
-                 class="legacy-button"
-                 data-action="prepare-listing"
+                 class="legacy-button clue-retain-button"
+                 data-action="keep-item"
                  data-item-id="${item.id}"
-               >上架</button>
-               <button type="button" class="legacy-button" data-action="keep-item" data-item-id="${item.id}">自留</button>`
-            : ""
+               >自留</button>`
+            : `
+              <div class="inventory-view-action ${showViewGuide ? "has-guide" : ""}">
+                <button type="button" class="legacy-button ${
+                  showViewGuide ? "is-guided" : ""
+                }" data-action="view-item" data-item-id="${item.id}">
+                  ${isBox ? "打开" : "检视"}
+                </button>
+                ${
+                  showViewGuide
+                    ? `<span class="inventory-view-tip">
+                        点击查看物品详情
+                        <i aria-hidden="true"></i>
+                      </span>`
+                    : ""
+                }
+              </div>
+              ${
+                !isBox && item.status !== "listed"
+                  ? item.category === "special"
+                    ? `<button
+                         type="button"
+                         class="legacy-button"
+                         data-action="prepare-listing"
+                         data-item-id="${item.id}"
+                       >上架</button>
+                       <button type="button" class="legacy-button" data-action="report-special" data-item-id="${item.id}">上报</button>`
+                    : `<button
+                       type="button"
+                       class="legacy-button"
+                       data-action="prepare-listing"
+                       data-item-id="${item.id}"
+                     >上架</button>
+                     <button type="button" class="legacy-button" data-action="keep-item" data-item-id="${item.id}">自留</button>`
+                  : ""
+              }
+            `
         }
       </div>
     </article>
@@ -3598,6 +3908,7 @@ function renderListingEditor() {
 function renderListingRow(listing) {
   const statusText = {
     active: "等待买家",
+    scheduled: "等待上架",
     sold: "已成交",
     failed: "交易失败"
   }[listing.status];
@@ -3629,7 +3940,7 @@ function renderListingRow(listing) {
           data-item-id="${listing.id}"
         >查看物品</button>
         ${
-          listing.status === "active"
+          ["active", "scheduled"].includes(listing.status)
             ? `<button
                 type="button"
                 class="legacy-button"
@@ -3818,39 +4129,62 @@ function renderSearchResults() {
           result
             ? `
               ${
-                result.classified
+                result.specialArchive
+                  ? `<div class="k12-dossier">
+                      <span class="k12-code">${escapeHtml(
+                        result.archiveCode ?? "K-12"
+                      )}</span>
+                      <strong>${escapeHtml(result.title)}</strong>
+                      <p>${escapeHtml(result.demand)}</p>
+                      <p>${escapeHtml(result.risk)}</p>
+                      ${
+                        result.mainStoryAction === "open-locker"
+                          ? `<button type="button" class="legacy-button primary" data-action="main-open-locker">打开旧车站寄存柜</button>`
+                          : ""
+                      }
+                    </div>`
+                  : ""
+              }
+              ${
+                result.classified && !result.specialArchive
                   ? `<div class="clue-search-note">
                       <strong>受限线索</strong>
                       <span>该条目属于私人档案，不能公开出售。搜索会逐步推进文件夹中的线索阶段。</span>
                     </div>`
                   : ""
               }
-              <h3>${escapeHtml(result.title)}</h3>
-              <div class="search-fact"><span>价格区间</span><strong class="key-income">${formatCurrency(
-                result.priceRange[0]
-              )} - ${formatCurrency(result.priceRange[1])}</strong></div>
-              <div class="search-fact"><span>市场需求</span><strong class="key-info">${escapeHtml(
-                result.demand
-              )}</strong></div>
-              <div class="search-fact"><span>风险</span><strong class="key-alert">${escapeHtml(
-                result.risk
-              )}</strong></div>
-              <div class="search-fact"><span>潜在买家</span><strong class="key-info">${escapeHtml(
-                result.buyer
-              )}</strong></div>
-              <div class="unlocked-tags">
-                ${result.unlockedTags
-                  .map((tag) => `<span class="keyword-chip">${escapeHtml(tag)}</span>`)
-                  .join("")}
-              </div>
               ${
-                result.evidence
-                  ? (Array.isArray(result.evidence)
-                      ? result.evidence
-                      : [result.evidence]
-                    )
-                      .map(renderSearchEvidence)
-                      .join("")
+                !result.specialArchive
+                  ? `
+                    <h3>${escapeHtml(result.title)}</h3>
+                    <div class="search-fact"><span>价格区间</span><strong class="key-income">${formatCurrency(
+                      result.priceRange[0]
+                    )} - ${formatCurrency(result.priceRange[1])}</strong></div>
+                    <div class="search-fact"><span>市场需求</span><strong class="key-info">${escapeHtml(
+                      result.demand
+                    )}</strong></div>
+                    <div class="search-fact"><span>风险</span><strong class="key-alert">${escapeHtml(
+                      result.risk
+                    )}</strong></div>
+                    <div class="search-fact"><span>潜在买家</span><strong class="key-info">${escapeHtml(
+                      result.buyer
+                    )}</strong></div>
+                    <div class="unlocked-tags">
+                      ${result.unlockedTags
+                        .map((tag) => `<span class="keyword-chip">${escapeHtml(tag)}</span>`)
+                        .join("")}
+                    </div>
+                    ${
+                      result.evidence
+                        ? (Array.isArray(result.evidence)
+                            ? result.evidence
+                            : [result.evidence]
+                          )
+                            .map(renderSearchEvidence)
+                            .join("")
+                        : ""
+                    }
+                  `
                   : ""
               }
             `
@@ -4007,7 +4341,8 @@ function renderFolderApp() {
             ? `<div class="folder-case-note">
                 <strong>${escapeHtml(caseLabel)}</strong>
                 <span>线索物品只能自留，不能上架或出售。通过万物通逐步补充资料。</span>
-              </div>`
+              </div>
+              ${renderMainStoryPanel(state.mainStory)}`
             : ""
         }
         ${
@@ -4050,31 +4385,48 @@ function renderFolderApp() {
                 ${folderItems
                   .map(
                     (item) => `
-                      <article class="folder-item">
-                        <div class="folder-paper-icon" aria-hidden="true"></div>
-                        <div class="folder-item-copy">
-                          <div class="folder-item-title">
-                            <strong>${escapeHtml(item.name)}</strong>
+                      <div class="folder-item-block">
+                        <article class="folder-item">
+                          <div class="folder-paper-icon" aria-hidden="true"></div>
+                          <div class="folder-item-copy">
+                            <div class="folder-item-title">
+                              <strong>${escapeHtml(item.name)}</strong>
+                              ${
+                                item.clue
+                                  ? `<span class="folder-effect-badge is-clue">${escapeHtml(
+                                      caseLabel
+                                    )}</span>`
+                                  : item.effectActive
+                                  ? `<span class="folder-effect-badge is-active">生效</span>`
+                                  : item.effectStacked
+                                    ? `<span class="folder-effect-badge">同类效果已生效</span>`
+                                    : ""
+                              }
+                            </div>
+                            <p>${escapeHtml(item.description ?? "")}</p>
+                            <span>${escapeHtml(
+                              item.clue
+                                ? "线索物品 · 强制自留"
+                                : item.effect ?? "自留物品"
+                            )}</span>
                             ${
                               item.clue
-                                ? `<span class="folder-effect-badge is-clue">${escapeHtml(
-                                    caseLabel
-                                  )}</span>`
-                                : item.effectActive
-                                ? `<span class="folder-effect-badge is-active">生效</span>`
-                                : item.effectStacked
-                                  ? `<span class="folder-effect-badge">同类效果已生效</span>`
-                                  : ""
+                                ? `<button
+                                    type="button"
+                                    class="legacy-button"
+                                    data-action="view-folder-item"
+                                    data-item-id="${item.id}"
+                                  >查看线索内容</button>`
+                                : ""
                             }
                           </div>
-                          <p>${escapeHtml(item.description ?? "")}</p>
-                          <span>${escapeHtml(
-                            item.clue
-                              ? "线索物品 · 强制自留"
-                              : item.effect ?? "自留物品"
-                          )}</span>
-                        </div>
-                      </article>
+                        </article>
+                        ${
+                          storyClueViewerId === item.id
+                            ? renderStoryClueViewer(item.id)
+                            : ""
+                        }
+                      </div>
                     `
                   )
                   .join("")}
@@ -4083,6 +4435,172 @@ function renderFolderApp() {
         }
       </section>
     </div>
+  `;
+}
+
+function renderStoryClueViewer(itemId) {
+  const item = findItemForInspection(itemId);
+  if (!item) return "";
+  const templateId = item.templateId ?? item.id;
+  const state = Game.getState();
+  const story = state.mainStory ?? {};
+  const template = STAGE_TWO_DATA.mainStory.evidenceItems.find(
+    (candidate) => candidate.id === templateId
+  );
+  const storyText =
+    template?.investigationText ??
+    (templateId === "mysterious_key"
+      ? STAGE_TWO_DATA.mainStory.specialBox.items.find(
+          (candidate) => candidate.id === "mysterious_key"
+        )?.investigationText
+      : null) ??
+    item.investigationText ??
+    item.description;
+  const supportsArchiveSearch = [
+    "clue_locker_receipt",
+    "mysterious_key"
+  ].includes(templateId);
+  const archiveResult = supportsArchiveSearch
+    ? story.act2Solved
+      ? {
+          title: "受限档案：旧车站 K-12",
+          demand: "K-12 对应旧车站长期寄存柜。",
+          risk: "柜内资料已经取回，并归档为旧案证据。"
+        }
+      : story.lockerUnlocked
+        ? {
+            title: "受限档案：旧车站 K-12",
+            demand: "K-12 对应旧车站长期寄存柜。",
+            risk: "柜内资料尚未取回。"
+          }
+        : {
+            title: "受限档案：K-12",
+            demand: "K-12 不是普通物品编号。",
+            risk: "档案权限不足，暂时无法对应寄存设施。"
+          }
+    : null;
+  const canOpenLocker =
+    story.lockerUnlocked &&
+    !story.act2Solved &&
+    ["clue_locker_receipt", "mysterious_key"].includes(templateId);
+  return `
+    <section class="story-clue-viewer" data-story-clue-viewer="${escapeHtml(
+      item.id
+    )}">
+      <header>
+        <div>
+          <p class="eyebrow">万物通调查结果</p>
+          <h3>${escapeHtml(item.name)}</h3>
+        </div>
+        <button type="button" class="legacy-button" data-action="close-story-clue">关闭</button>
+      </header>
+      <div class="story-clue-viewer-body">
+        <div class="story-clue-visual">
+          ${renderItemVisual(item, { compact: true, interactive: false })}
+        </div>
+        <div class="story-clue-copy">
+          <strong>线索结论</strong>
+          <p>${escapeHtml(storyText ?? "目前没有更多可确认的信息。")}</p>
+          <div class="story-clue-tags">
+            ${(item.keywords ?? [])
+              .map((keyword) => `<span>${escapeHtml(keyword)}</span>`)
+              .join("")}
+          </div>
+          ${
+            archiveResult
+              ? `<div class="story-clue-result">
+                  <strong>${escapeHtml(
+                    archiveResult.title ?? "档案查询结果"
+                  )}</strong>
+                  <p>${escapeHtml(archiveResult.demand ?? "")}</p>
+                  ${
+                    archiveResult.risk
+                      ? `<p>${escapeHtml(archiveResult.risk)}</p>`
+                      : ""
+                  }
+                </div>`
+              : ""
+          }
+        </div>
+      </div>
+      ${
+        canOpenLocker
+          ? `<div class="story-clue-actions">
+              <button
+                type="button"
+                class="legacy-button primary"
+                data-action="main-open-locker"
+              >打开旧车站寄存柜</button>
+            </div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+function renderMainStoryPanel(story = {}) {
+  if (!story || story.stage === "inactive" || !story.act3Solved) return "";
+  const stageLabels = {
+    box_home: "私人收藏箱尚未打开",
+    box_owned: "私人收藏箱已带回",
+    key_found: "神秘的钥匙已归档",
+    email: "异常邮件已收到",
+    news: "死亡新闻已发布",
+    act1: "第一幕：账号使用者已确认",
+    act2: "第二幕：旧车站证据已取回",
+    act3: "第三幕：赵衡仍然活着",
+    resolved: "案件已经作出最终处理"
+  };
+  return `
+    <section class="main-story-panel">
+      <header>
+        <strong>死者仍在出价</strong>
+        <span>${escapeHtml(stageLabels[story.stage] ?? "案件档案")}</span>
+      </header>
+      <div class="main-story-evidence">
+        <span class="${story.keyFound ? "is-complete" : ""}">神秘的钥匙</span>
+        <span class="${story.act1Solved ? "is-complete" : ""}">账号使用者</span>
+        <span class="${story.act2Solved ? "is-complete" : ""}">旧车站证据</span>
+        <span class="${story.act3Solved ? "is-complete" : ""}">赵衡身份</span>
+      </div>
+      ${
+        story.act2Solved && !story.act3Solved
+          ? `<button type="button" class="legacy-button primary" data-action="main-story-combine">
+              整理证据链
+            </button>`
+          : ""
+      }
+      ${
+        story.act3Solved && !story.finalChoice
+          ? `<div class="main-story-choices">
+              <strong>最终选择</strong>
+              ${STAGE_TWO_DATA.mainStory.choices
+                .map(
+                  (choice) => `
+                    <button
+                      type="button"
+                      class="legacy-button"
+                      data-action="main-story-choice"
+                      data-choice="${choice.id}"
+                    >${escapeHtml(choice.label)}</button>
+                  `
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+      ${
+        story.finalChoice
+          ? `<div class="main-story-resolved">
+              最终处理：${escapeHtml(
+                STAGE_TWO_DATA.mainStory.choices.find(
+                  (choice) => choice.id === story.finalChoice
+                )?.label ?? "已完成"
+              )}
+            </div>`
+          : ""
+      }
+    </section>
   `;
 }
 
@@ -4232,6 +4750,21 @@ function announce(message) {
   window.setTimeout(() => {
     liveRegion.textContent = message;
   }, 20);
+}
+
+function renderHighlightedText(value, terms = []) {
+  let html = escapeHtml(value);
+  terms
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .forEach((term) => {
+      const escaped = escapeHtml(term);
+      html = html.replaceAll(
+        escaped,
+        `<span class="key-alert">${escaped}</span>`
+      );
+    });
+  return html;
 }
 
 function escapeHtml(value) {
