@@ -132,6 +132,33 @@ input:focus-visible {
   inset: 0;
   overflow: hidden;
   pointer-events: none;
+  background: url("../美术/界面/desktop_Windows.jpg?v=20261007-7") center / cover no-repeat;
+}
+
+.desktop-wallpaper::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(3, 18, 26, 0.08),
+      rgba(3, 18, 26, 0.2)
+    ),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.018) 0,
+      rgba(255, 255, 255, 0.018) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+}
+
+.wallpaper-horizon,
+.wallpaper-suitcase,
+.wallpaper-caption {
+  display: none;
 }
 
 .wallpaper-horizon {
@@ -827,6 +854,7 @@ input:focus-visible {
 }
 
 .inspection-workspace {
+  position: relative;
   grid-column: 1 / -1;
   display: grid;
   min-height: 0;
@@ -867,11 +895,61 @@ input:focus-visible {
 }
 
 .inspection-stage {
+  position: relative;
   display: grid;
   min-height: 0;
   padding: 12px;
   grid-template-rows: 1fr auto;
   gap: 8px;
+}
+
+.inspection-tool-rail {
+  position: absolute;
+  z-index: 8;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  padding: 5px;
+  gap: 4px;
+  border: 2px outset var(--win-gray);
+  background: rgba(216, 216, 216, 0.94);
+}
+
+.inspection-tool-button {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  padding: 3px;
+  place-items: center;
+  border: 2px outset var(--win-gray);
+  background: #ececec;
+  cursor: pointer;
+}
+
+.inspection-tool-button.is-selected {
+  border-color: #b3922c;
+  background: #fff4a8;
+  outline: 2px solid #000080;
+}
+
+.inspection-tool-button.is-completed {
+  border-color: #2f7d42;
+  background: #d9efdc;
+}
+
+.inspection-tool-icon {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.inspection-stage.is-operating {
+  cursor: grab;
+}
+
+.inspection-stage.has-active-tool {
+  cursor: crosshair;
 }
 
 .inspection-stage-caption {
@@ -891,6 +969,7 @@ input:focus-visible {
 }
 
 .inspection-tools,
+.inspection-operations,
 .inspection-facts,
 .inspection-result,
 .inspection-forge-list {
@@ -899,6 +978,252 @@ input:focus-visible {
   gap: 5px;
   border: 1px solid #aaa;
   background: #fff;
+}
+
+.inspection-operation-button {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+
+.inspection-operation-button small {
+  color: #666;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.inspection-operation-button.is-completed {
+  border-color: #2f7d42;
+  background: #dff0e2;
+}
+
+.inspection-minigame-overlay {
+  position: absolute;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  padding: 20px;
+  place-items: center;
+  background: rgba(15, 25, 35, 0.48);
+}
+
+.inspection-minigame {
+  display: grid;
+  width: min(780px, 100%);
+  max-height: 100%;
+  padding: 14px;
+  gap: 10px;
+  overflow: auto;
+  border: 3px outset var(--win-gray);
+  background: #ececec;
+  box-shadow: 7px 8px 0 rgba(0, 0, 0, 0.36);
+}
+
+.minigame-workbench-layout {
+  display: grid;
+  min-height: 310px;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 10px;
+}
+
+.minigame-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 310px;
+  overflow: hidden;
+  border: 3px inset var(--win-gray);
+  background: #3c4650;
+}
+
+.minigame-bench-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+  opacity: 0.82;
+}
+
+.minigame-item-layer {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  width: min(58%, 270px);
+  height: 78%;
+  transform: translate(-50%, -50%);
+}
+
+.minigame-item-layer .item-visual.is-compact {
+  height: 100%;
+  min-height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.minigame-body-overlay {
+  position: absolute;
+  z-index: 4;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+}
+
+.minigame-tool-rail {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 7px;
+  border: 3px inset var(--win-gray);
+  background: #d5d5d5;
+}
+
+.minigame-tool-button {
+  display: grid;
+  padding: 5px;
+  gap: 3px;
+  place-items: center;
+  border: 2px outset var(--win-gray);
+  background: #ececec;
+  cursor: pointer;
+}
+
+.minigame-tool-button.is-selected {
+  border-color: #b3922c;
+  background: #fff4a8;
+  outline: 2px solid #000080;
+}
+
+.minigame-tool-icon {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.minigame-tool-button span {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.inspection-minigame > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.inspection-minigame > header h3 {
+  margin: 2px 0 0;
+}
+
+.inspection-minigame > header button {
+  width: 30px;
+  height: 28px;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+}
+
+.minigame-instruction,
+.minigame-status {
+  margin: 0;
+  padding: 7px 9px;
+  border: 2px inset var(--win-gray);
+  background: #fff;
+}
+
+.minigame-status {
+  font-weight: 700;
+}
+
+.minigame-clean-grid {
+  display: grid;
+  padding: 8px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  border: 3px solid #332a20;
+  background: #776a55;
+  cursor: crosshair;
+}
+
+.minigame-clean-grid button {
+  min-height: 28px;
+  border: 1px solid #4b4237;
+  background: #a49173;
+}
+
+.minigame-clean-grid button.is-cleaned {
+  background: #e7e0cd;
+}
+
+.minigame-seam-list,
+.minigame-options,
+.minigame-part-list,
+.minigame-slot-list {
+  display: grid;
+  gap: 7px;
+}
+
+.minigame-seam-list button,
+.minigame-options button {
+  min-height: 36px;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+}
+
+.minigame-seam-list button.is-correct,
+.minigame-options button.is-correct {
+  border-color: #2f7d42;
+  background: #d9efdc;
+}
+
+.minigame-seam-list button.is-error,
+.minigame-options button.is-error {
+  border-color: #a31515;
+  background: #ffe1dc;
+}
+
+.minigame-parts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.minigame-part-list button,
+.minigame-slot-list div {
+  min-height: 42px;
+  padding: 7px;
+  border: 2px outset var(--win-gray);
+  background: #d8d8d8;
+  text-align: center;
+}
+
+.minigame-part-list button {
+  cursor: grab;
+}
+
+.minigame-part-list button.is-selected {
+  outline: 2px solid #000080;
+}
+
+.minigame-slot-list div {
+  border-style: inset;
+  background: #fff;
+  cursor: pointer;
+}
+
+.minigame-slot-list div.is-correct {
+  border-color: #2f7d42;
+  background: #d9efdc;
+}
+
+.minigame-slot-list div.is-error {
+  border-color: #a31515;
+  background: #ffe1dc;
 }
 
 .inspection-facts span,
@@ -955,6 +1280,40 @@ input:focus-visible {
   display: grid;
   margin-bottom: 10px;
   gap: 5px;
+}
+
+.inspection-keyword-references {
+  display: grid;
+  gap: 7px;
+}
+
+.inspection-keyword-reference {
+  display: grid;
+  padding: 7px 8px;
+  gap: 4px;
+  border-left: 4px solid #b3922c;
+  background: #fffbe0;
+}
+
+.inspection-keyword-reference header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inspection-keyword-reference header span {
+  color: #66542a;
+  font-size: 11px;
+}
+
+.inspection-keyword-reference b {
+  overflow-wrap: anywhere;
+}
+
+.inspection-keyword-reference p {
+  margin: 0;
+  color: #555;
+  line-height: 1.45;
 }
 
 .inspection-auto-reference {
@@ -1031,6 +1390,26 @@ input:focus-visible {
   width: 100%;
   height: 100%;
   image-rendering: pixelated;
+}
+
+.item-art-image {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.item-art-fallback {
+  position: absolute;
+  inset: 0;
+}
+
+.item-art-fallback[hidden] {
+  display: none;
 }
 
 .art-part {
@@ -1409,6 +1788,7 @@ input:focus-visible {
 }
 
 .inspection-hotspot {
+  display: none;
   position: absolute;
   z-index: 4;
   min-width: 72px;
@@ -1457,8 +1837,8 @@ input:focus-visible {
 
 .buyer-workspace {
   display: grid;
-  min-height: 430px;
-  grid-template-columns: minmax(300px, 0.9fr) minmax(320px, 1.1fr);
+  min-height: 500px;
+  grid-template-columns: minmax(360px, 0.82fr) minmax(380px, 1.18fr);
   gap: 10px;
 }
 
@@ -1473,7 +1853,7 @@ input:focus-visible {
 .trade-item-info {
   display: grid;
   align-content: start;
-  gap: 9px;
+  gap: 7px;
 }
 
 .trade-item-economy,
@@ -1486,9 +1866,24 @@ input:focus-visible {
   background: #fff;
 }
 
+.trade-item-info .item-visual.is-compact {
+  height: 145px;
+  min-height: 145px;
+}
+
+.trade-item-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trade-item-facts > strong {
+  grid-column: 1 / -1;
+}
+
 .trade-item-facts span {
-  padding: 4px 6px;
+  min-width: 0;
+  padding: 3px 5px;
   background: #f2f2f2;
+  line-height: 1.3;
 }
 
 .trade-item-facts span.is-highlighted {
@@ -1771,6 +2166,7 @@ input:focus-visible {
 }
 
 .auction-shell {
+  position: relative;
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);
 }
@@ -2855,6 +3251,32 @@ input:focus-visible {
   opacity: 0.7;
 }
 
+.bgm-toggle {
+  display: flex;
+  height: 34px;
+  padding: 3px 8px;
+  gap: 5px;
+  align-items: center;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+}
+
+.bgm-toggle > span {
+  color: #000080;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.bgm-toggle.is-muted {
+  color: #777;
+  background: #d2d2d2;
+}
+
+.bgm-toggle.is-muted > span {
+  color: #777;
+}
+
 .sleep-tooltip {
   position: absolute;
   z-index: 80;
@@ -3277,7 +3699,7 @@ input:focus-visible {
 }
 
 .auction-info {
-  padding: 18px;
+  padding: 14px;
   border: 3px ridge #d9c8a7;
   background: rgba(255, 246, 226, 0.94);
 }
@@ -3332,6 +3754,33 @@ input:focus-visible {
   line-height: 1.6;
 }
 
+.auction-natural-grid {
+  display: grid;
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px 10px;
+  border: 2px inset var(--win-gray);
+  background: #f4f4ef;
+}
+
+.auction-natural-grid div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.auction-natural-grid dt {
+  color: #555;
+  font-size: 11px;
+}
+
+.auction-natural-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
 .auction-box-card {
   display: grid;
   margin-top: 18px;
@@ -3377,7 +3826,7 @@ input:focus-visible {
 
 .auction-price {
   display: flex;
-  margin: 16px 0;
+  margin: 10px 0;
   padding: 10px;
   align-items: baseline;
   justify-content: space-between;
@@ -3393,12 +3842,12 @@ input:focus-visible {
 .competitor-list {
   display: grid;
   gap: 5px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .competitor-row {
   display: flex;
-  padding: 7px 9px;
+  padding: 6px 9px;
   justify-content: space-between;
   border: 1px solid #888;
   background: #eee;
@@ -3415,6 +3864,45 @@ input:focus-visible {
 
 .player-bid-row strong {
   color: #000080;
+}
+
+.legacy-button.is-insufficient {
+  border-color: #c27b25;
+  color: #7a3e00;
+  background: #ffe2b8;
+}
+
+.auction-notice {
+  position: absolute;
+  z-index: 24;
+  top: 18px;
+  left: 50%;
+  width: min(430px, calc(100% - 36px));
+  padding: 12px;
+  border: 3px outset var(--win-gray);
+  background: #fff3cf;
+  box-shadow: 6px 7px 0 rgba(0, 0, 0, 0.28);
+  transform: translateX(-50%);
+}
+
+.auction-notice header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.auction-notice header button {
+  width: 28px;
+  height: 26px;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+}
+
+.auction-notice p {
+  margin: 9px 0 0;
+  line-height: 1.55;
 }
 
 .auction-result {
@@ -3613,6 +4101,27 @@ input:focus-visible {
   border: 3px double #8e1515;
   background: #fff0bd;
   box-shadow: inset 0 0 0 3px #d7a344;
+}
+
+.inventory-card.is-inspection-complete {
+  border-color: #2f7d42;
+  background:
+    linear-gradient(135deg, rgba(47, 125, 66, 0.08), transparent 45%),
+    #e7f4e8;
+}
+
+.inspection-complete-note {
+  display: grid;
+  margin: 7px 0;
+  padding: 7px 9px;
+  gap: 2px;
+  border-left: 4px solid #2f7d42;
+  background: #d9efdc;
+}
+
+.inspection-complete-note span {
+  color: #315c39;
+  font-size: 11px;
 }
 
 .contraband-badge {
@@ -3837,6 +4346,139 @@ button.keyword-chip {
   border-left: 7px solid transparent;
 }
 
+.inspection-research-action {
+  position: relative;
+  display: grid;
+  width: 100%;
+}
+
+.forgery-layout {
+  display: grid;
+  min-height: 0;
+  height: 100%;
+  grid-template-columns: minmax(360px, 1fr) minmax(310px, 390px);
+  gap: 10px;
+}
+
+.forgery-item-stage,
+.forgery-editor {
+  position: relative;
+  min-height: 0;
+  padding: 10px;
+  border: 2px inset var(--win-gray);
+  background: #e8e8e8;
+}
+
+.forgery-item-stage {
+  overflow: hidden;
+}
+
+.forgery-magnifier {
+  position: absolute;
+  z-index: 9;
+  width: 92px;
+  height: 92px;
+  border: 5px solid #3b2b18;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 3px #d1b56d,
+    0 6px 0 rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.14);
+  transform: translate(-50%, -50%);
+}
+
+.forgery-stage-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.forgery-editor {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  overflow-y: auto;
+}
+
+.forgery-products,
+.forgery-slots,
+.forgery-facts {
+  display: grid;
+  padding: 8px;
+  gap: 6px;
+  border: 1px solid #999;
+  background: #fff;
+}
+
+.forgery-product-card,
+.forgery-facts button {
+  display: grid;
+  padding: 7px;
+  gap: 2px;
+  border: 2px outset var(--win-gray);
+  background: var(--win-gray);
+  cursor: pointer;
+  text-align: left;
+}
+
+.forgery-product-card.is-selected {
+  border-color: #2f7d42;
+  background: #d9efdc;
+}
+
+.forgery-slot {
+  display: grid;
+  min-height: 48px;
+  padding: 7px;
+  gap: 2px;
+  border: 2px dashed #777;
+  background: #f6f6f6;
+}
+
+.forgery-slot b {
+  color: #315c39;
+}
+
+.inspection-research-action > .legacy-button {
+  width: 100%;
+}
+
+.inspection-research-action.has-guide {
+  margin-bottom: 42px;
+}
+
+.inspection-research-tip {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 9px);
+  right: 0;
+  width: max-content;
+  max-width: 210px;
+  padding: 7px 9px;
+  border: 2px solid #000080;
+  background: #fff3a8;
+  box-shadow: 3px 4px 0 rgba(0, 0, 0, 0.22);
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  animation: guidePulse 900ms steps(2, end) infinite;
+}
+
+.inspection-research-tip i {
+  position: absolute;
+  top: -9px;
+  right: 18px;
+  width: 0;
+  height: 0;
+  border-right: 7px solid transparent;
+  border-bottom: 9px solid #000080;
+  border-left: 7px solid transparent;
+}
+
 .listing-editor {
   padding: 18px;
 }
@@ -4047,7 +4689,8 @@ button.keyword-chip {
 
 .buyer-panel {
   display: grid;
-  max-width: 760px;
+  width: 100%;
+  max-width: 1120px;
   margin: 0 auto;
   gap: 14px;
 }
@@ -4892,7 +5535,8 @@ button.keyword-chip {
 @media (max-width: 760px) {
   .inspection-main,
   .buyer-workspace,
-  .story-clue-viewer-body {
+  .story-clue-viewer-body,
+  .forgery-layout {
     grid-template-columns: 1fr;
   }
 

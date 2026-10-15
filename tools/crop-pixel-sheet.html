@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pixel Sheet Cropper</title>
+  </head>
+  <body>
+    <main>Loading pixel sheet cropper...</main>
+    <script type="module">
+      function loadImage(url) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error(`Image failed: ${url}`));
+          image.src = url;
+        });
+      }
+
+      async function cropPixelSheet(options) {
+        const image = await loadImage(options.url);
+        const columns = Math.max(1, Number(options.columns) || 2);
+        const rows = Math.max(1, Number(options.rows) || 2);
+        const outputWidth = Math.max(160, Number(options.outputWidth) || 640);
+        const outputHeight = Math.max(160, Number(options.outputHeight) || 640);
+        const cellWidth = image.naturalWidth / columns;
+        const cellHeight = image.naturalHeight / rows;
+        const results = [];
+
+        for (let row = 0; row < rows; row += 1) {
+          for (let column = 0; column < columns; column += 1) {
+            const canvas = document.createElement("canvas");
+            canvas.width = outputWidth;
+            canvas.height = outputHeight;
+            const context = canvas.getContext("2d");
+            context.imageSmoothingEnabled = false;
+            const scale = Math.min(
+              outputWidth / cellWidth,
+              outputHeight / cellHeight
+            );
+            const drawWidth = cellWidth * scale;
+            const drawHeight = cellHeight * scale;
+            const offsetX = (outputWidth - drawWidth) / 2;
+            const offsetY = (outputHeight - drawHeight) / 2;
+            context.drawImage(
+              image,
+              column * cellWidth,
+              row * cellHeight,
+              cellWidth,
+              cellHeight,
+              offsetX,
+              offsetY,
+              drawWidth,
+              drawHeight
+            );
+            results.push(canvas.toDataURL("image/png").split(",")[1]);
+          }
+        }
+
+        return results;
+      }
+
+      window.cropPixelSheet = cropPixelSheet;
+      window.pixelSheetCropperReady = true;
+      document.querySelector("main").textContent =
+        "Pixel sheet cropper is ready.";
+
+      const params = new URLSearchParams(window.location.search);
+      const rawSheetUrl =
+        params.get("sheet") || "/美术/物品/_miora_sheet_01.png";
+      const sheetUrl = /^(?:https?:)?\//.test(rawSheetUrl)
+        ? rawSheetUrl
+        : `/${rawSheetUrl}`;
+      const outputNames = (
+        params.get("names") || "camera,watch,paper,key"
+      )
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const outputFiles = outputNames.map((name) => ({
+        name: `${name}.png`,
+        label: `下载${name}`
+      }));
+      const columns = Math.max(1, Number(params.get("columns")) || 2);
+      const rows = Math.max(1, Number(params.get("rows")) || 2);
+
+      cropPixelSheet({
+        url: sheetUrl,
+        columns,
+        rows,
+        outputWidth: 640,
+        outputHeight: 640
+      }).then((crops) => {
+        const page = document.querySelector("main");
+        page.innerHTML = "";
+        crops.slice(0, outputFiles.length).forEach((dataUrl, index) => {
+          const file = outputFiles[index];
+          const link = document.createElement("a");
+          link.href = `data:image/png;base64,${dataUrl}`;
+          link.download = file.name;
+          link.textContent = file.label;
+          link.className = "download-link";
+          page.append(link);
+        });
+      });
+    </script>
+    <style>
+      body {
+        padding: 24px;
+        font: 16px/1.6 sans-serif;
+      }
+
+      .download-link {
+        display: block;
+        margin: 8px 0;
+      }
+    </style>
+  </body>
+</html>

@@ -2,9 +2,10 @@ import {
   CATEGORY_INFO,
   CONFIG,
   DESKTOP_APPS,
+  MINIGAME_ART_ASSETS,
   STAGE_TWO_DATA
-} from "./data.js?v=20260923-17";
-import { Game, formatCurrency } from "./game.js?v=20260923-17";
+} from "./data.js?v=20261007-7";
+import { Game, formatCurrency } from "./game.js?v=20261007-7";
 
 let root;
 let workspace;
@@ -27,16 +28,59 @@ const inspectionState = {
   itemId: null,
   returnTab: "inventory",
   activeTool: null,
+  activeOperationId: null,
+  page: "main",
+  forgeryDraft: null,
   researchOpen: false,
   researchTab: "archive",
   researchResult: null,
   lastResult: ""
 };
+let inspectionMiniGame = {
+  active: false,
+  mode: "operation",
+  itemId: null,
+  operationId: null,
+  productId: null,
+  type: null,
+  startedAt: 0,
+  errors: 0,
+  progress: 0,
+  cleanedCells: [],
+  sequenceIndex: 0,
+  selectedPart: null,
+  placedParts: [],
+  options: [],
+  correctOptionId: null,
+  draggingClean: false,
+  activeToolId: null,
+  correctToolId: null,
+  toolIds: [],
+  workbenchFamily: "generic"
+};
+let inspectionDrag = null;
 let clockTimer = null;
 let uiScreen = "MENU";
 let isPaused = false;
 let lastInteractionAt = Date.now();
 let idleReminderArmed = true;
+let bgmAudio = null;
+let bgmTrackKey = null;
+let bgmEnabled = true;
+let bgmFadeTimer = null;
+
+const BGM_TRACKS = {
+  menu: "./声音/menu_noir_loop.wav",
+  day: "./声音/day_market_loop.wav",
+  case: "./声音/case_file_loop.wav"
+};
+const BGM_VOLUME = 0.24;
+
+function versionedAsset(path) {
+  if (!path) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}v=${encodeURIComponent(CONFIG.assetVersion)}`;
+}
 
 const GUIDE_STEPS = [
   {
@@ -69,7 +113,7 @@ const GUIDE_STEPS = [
     id: "AUCTION",
     number: 4,
     title: "参加线上拍卖",
-    message: "打开线上拍卖，查看两条线索并决定是否参与竞拍。",
+    message: "打开线上拍卖，查看箱子公开信息并决定是否参与竞拍。",
     target: "auction",
     buttonText: "打开线上拍卖"
   },
@@ -130,6 +174,7 @@ function renderStartScreen() {
   expandedMailId = "broker_initial";
   storyClueViewerId = null;
   closeInspection();
+  setBgmTrack("menu", { play: true });
   activeWindowId = null;
   root.innerHTML = `
     <section class="desktop menu-desktop">
@@ -184,6 +229,7 @@ function renderNicknameScreen() {
   expandedMailId = "broker_initial";
   storyClueViewerId = null;
   closeInspection();
+  setBgmTrack("menu", { play: true });
   root.innerHTML = `
     <section class="desktop menu-desktop">
       <div class="desktop-wallpaper" aria-hidden="true">
@@ -221,6 +267,7 @@ function enterDesktop() {
   isPaused = false;
   renderDesktop();
   refreshFromState();
+  playBgm();
   if (Game.getState().guideStep === "MAIL" && !windowState.has("mail")) {
     openApp("mail");
     refreshFromState();
@@ -401,6 +448,16 @@ function renderDesktop() {
             <span id="taskbar-day">第 ${state.day} 天</span>
             <strong id="taskbar-time">21:00</strong>
           </span>
+          <button
+            type="button"
+            class="bgm-toggle"
+            id="bgm-toggle"
+            data-action="toggle-bgm"
+            title="切换背景音乐"
+          >
+            <span aria-hidden="true">♪</span>
+            <b id="bgm-toggle-label">BGM 开</b>
+          </button>
           <button
             type="button"
             class="quick-repay-button is-hidden"
@@ -590,7 +647,19 @@ function bindEvents() {
   root.addEventListener("click", handleClick);
   root.addEventListener("input", handleInputChange);
   root.addEventListener("pointerdown", handleRootPointerDown, true);
+  root.addEventListener("dragstart", handleMiniGameDragStart);
+  root.addEventListener("dragover", handleMiniGameDragOver);
+  root.addEventListener("drop", handleMiniGameDrop);
   document.addEventListener("pointerdown", handleDocumentPointerDown);
+  document.addEventListener("pointermove", (event) => {
+    handleMiniGamePointerMove(event);
+    handleInspectionPointerMove(event);
+    handleForgeryPointerMove(event);
+  });
+  document.addEventListener("pointerup", () => {
+    handleMiniGamePointerUp();
+    handleInspectionPointerUp();
+  });
   document.addEventListener("keydown", handleKeyDown);
   window.addEventListener("resize", () => {
     clampOpenWindows();
@@ -632,6 +701,284 @@ function handleInputChange(event) {
   }
 }
 
+function handleMiniGameClick(element) {
+  const action = element.dataset.minigameAction;
+  if (action === "cancel") {
+    resetInspectionMiniGame();
+    refreshFromState();
+    return;
+  }
+  if (action === "tool") {
+    inspectionMiniGame.activeToolId = element.dataset.toolId;
+    document
+      .querySelectorAll(".minigame-tool-button")
+      .forEach((node) =>
+        node.classList.toggle(
+          "is-selected",
+          node.dataset.toolId === inspectionMiniGame.activeToolId
+        )
+      );
+    updateMiniGameStatus();
+    return;
+  }
+  if (action === "seam") {
+    if (!ensureMiniGameTool()) return;
+    const step = Number(element.dataset.step);
+    if (step === inspectionMiniGame.sequenceIndex) {
+      element.classList.add("is-correct");
+      inspectionMiniGame.sequenceIndex += 1;
+      updateMiniGameStatus();
+      if (inspectionMiniGame.sequenceIndex >= 3) {
+        finishInspectionMiniGame(getMiniGameQuality());
+      }
+    } else {
+      inspectionMiniGame.errors += 1;
+      element.classList.add("is-error");
+      updateMiniGameStatus();
+    }
+    return;
+  }
+  if (action === "part") {
+    inspectionMiniGame.selectedPart = element.dataset.minigamePart;
+    document
+      .querySelectorAll("[data-minigame-part]")
+      .forEach((node) =>
+        node.classList.toggle(
+          "is-selected",
+          node.dataset.minigamePart === inspectionMiniGame.selectedPart
+        )
+      );
+    return;
+  }
+  if (action === "slot") {
+    if (!ensureMiniGameTool()) return;
+    if (!inspectionMiniGame.selectedPart) return;
+    placeMiniGamePart(
+      inspectionMiniGame.selectedPart,
+      element.dataset.minigameSlot,
+      element
+    );
+    return;
+  }
+  if (action === "option") {
+    if (!ensureMiniGameTool()) return;
+    const optionId = element.dataset.optionId;
+    if (optionId === inspectionMiniGame.correctOptionId) {
+      element.classList.add("is-correct");
+      finishInspectionMiniGame(getMiniGameQuality());
+    } else {
+      inspectionMiniGame.errors += 1;
+      element.classList.add("is-error");
+      updateMiniGameStatus();
+    }
+  }
+}
+
+function handleMiniGameDragStart(event) {
+  const forgeryFact = event.target.closest("[data-forgery-fact]");
+  if (forgeryFact) {
+    event.dataTransfer?.setData(
+      "text/plain",
+      `forgery:${forgeryFact.dataset.forgeryFact}:${forgeryFact.dataset.factKind}`
+    );
+    return;
+  }
+  const part = event.target.closest("[data-minigame-part]");
+  if (!part || !inspectionMiniGame.active) return;
+  inspectionMiniGame.selectedPart = part.dataset.minigamePart;
+  event.dataTransfer?.setData("text/plain", inspectionMiniGame.selectedPart);
+}
+
+function handleMiniGameDragOver(event) {
+  if (event.target.closest("[data-forgery-slot]")) {
+    event.preventDefault();
+    return;
+  }
+  if (!inspectionMiniGame.active) return;
+  if (event.target.closest("[data-minigame-slot]")) {
+    event.preventDefault();
+  }
+}
+
+function handleMiniGameDrop(event) {
+  const forgerySlot = event.target.closest("[data-forgery-slot]");
+  if (forgerySlot) {
+    event.preventDefault();
+    handleForgeryDrop(event, forgerySlot);
+    return;
+  }
+  const slot = event.target.closest("[data-minigame-slot]");
+  if (!slot || !inspectionMiniGame.active) return;
+  if (!ensureMiniGameTool()) return;
+  event.preventDefault();
+  const partId =
+    event.dataTransfer?.getData("text/plain") ||
+    inspectionMiniGame.selectedPart;
+  if (partId) placeMiniGamePart(partId, slot.dataset.minigameSlot, slot);
+}
+
+function handleForgeryDrop(event, slot) {
+  const payload = event.dataTransfer?.getData("text/plain") ?? "";
+  const [, factId, factKind] = payload.split(":");
+  if (!factId || !inspectionState.forgeryDraft) return;
+  inspectionState.forgeryDraft.placements ??= {};
+  if (factKind === slot.dataset.expectedKind) {
+    inspectionState.forgeryDraft.placements[slot.dataset.forgerySlot] =
+      factId;
+  } else {
+    inspectionState.forgeryDraft.errors += 1;
+  }
+  refreshFromState();
+}
+
+function ensureMiniGameTool() {
+  if (!inspectionMiniGame.activeToolId) {
+    updateMiniGameStatus("先选择工具");
+    return false;
+  }
+  if (
+    inspectionMiniGame.correctToolId &&
+    inspectionMiniGame.activeToolId !== inspectionMiniGame.correctToolId
+  ) {
+    inspectionMiniGame.errors += 1;
+    updateMiniGameStatus("工具不匹配");
+    return false;
+  }
+  return true;
+}
+
+function placeMiniGamePart(partId, slotId, slotElement) {
+  if (inspectionMiniGame.placedParts.includes(partId)) return;
+  if (partId === slotId) {
+    inspectionMiniGame.placedParts.push(partId);
+    slotElement.classList.add("is-correct");
+    inspectionMiniGame.selectedPart = null;
+    updateMiniGameStatus();
+    if (inspectionMiniGame.placedParts.length >= 3) {
+      finishInspectionMiniGame(getMiniGameQuality());
+    }
+  } else {
+    inspectionMiniGame.errors += 1;
+    slotElement.classList.add("is-error");
+    updateMiniGameStatus();
+  }
+}
+
+function cleanMiniGameCell(cell) {
+  if (!cell || cell.classList.contains("is-cleaned")) return;
+  cell.classList.add("is-cleaned");
+  inspectionMiniGame.progress = Math.min(
+    1,
+    (inspectionMiniGame.cleanedCells.length + 1) / 30
+  );
+  inspectionMiniGame.cleanedCells.push(cell.dataset.minigameCleanCell);
+  updateMiniGameStatus();
+}
+
+function handleMiniGamePointerMove(event) {
+  if (!inspectionMiniGame.draggingClean || !inspectionMiniGame.active) return;
+  const cell = document
+    .elementFromPoint(event.clientX, event.clientY)
+    ?.closest("[data-minigame-clean-cell]");
+  if (cell) cleanMiniGameCell(cell);
+}
+
+function handleMiniGamePointerUp() {
+  if (!inspectionMiniGame.draggingClean) return;
+  inspectionMiniGame.draggingClean = false;
+  if (inspectionMiniGame.progress >= 0.65) {
+    finishInspectionMiniGame(getMiniGameQuality());
+  }
+}
+
+function handleInspectionPointerMove(event) {
+  if (!inspectionDrag || !inspectionState.activeOperationId) return;
+  inspectionDrag.moved = Math.max(
+    inspectionDrag.moved,
+    Math.hypot(
+      event.clientX - inspectionDrag.startX,
+      event.clientY - inspectionDrag.startY
+    )
+  );
+}
+
+function handleInspectionPointerUp() {
+  if (!inspectionDrag || !inspectionState.activeOperationId) {
+    inspectionDrag = null;
+    return;
+  }
+  const drag = inspectionDrag;
+  inspectionDrag = null;
+  document
+    .querySelector("[data-inspection-stage]")
+    ?.classList.remove("is-operating");
+  if (drag.moved < 24) return;
+  const elapsed = Date.now() - drag.startedAt;
+  const quality =
+    drag.moved >= 110 && elapsed <= 8000
+      ? "perfect"
+      : drag.moved >= 48
+        ? "qualified"
+        : "rough";
+  inspectionState.lastResult = Game.completeInspectionOperation(
+    inspectionState.itemId,
+    inspectionState.activeOperationId,
+    quality
+  );
+  inspectionState.activeOperationId = null;
+  inspectionState.activeTool = null;
+  refreshFromState();
+}
+
+function handleForgeryPointerMove(event) {
+  const stage = event.target.closest("[data-forgery-stage]");
+  if (!stage) return;
+  const magnifier = stage.querySelector("[data-forgery-magnifier]");
+  if (!magnifier) return;
+  const rect = stage.getBoundingClientRect();
+  magnifier.style.left = `${event.clientX - rect.left}px`;
+  magnifier.style.top = `${event.clientY - rect.top}px`;
+}
+
+function updateMiniGameStatus(message = "") {
+  const status = document.querySelector("[data-minigame-status]");
+  if (status) {
+    status.textContent = message || renderMiniGameStatus(inspectionMiniGame);
+  }
+}
+
+function getMiniGameQuality() {
+  const elapsed = Date.now() - inspectionMiniGame.startedAt;
+  if (inspectionMiniGame.errors === 0 && elapsed <= 8000) {
+    return "perfect";
+  }
+  if (inspectionMiniGame.errors <= 2 || elapsed <= 10000) {
+    return "qualified";
+  }
+  return "rough";
+}
+
+function finishInspectionMiniGame(quality) {
+  const game = { ...inspectionMiniGame };
+  let result = "";
+  if (game.mode === "forge") {
+    result = Game.applyInspectionForgery(
+      game.itemId,
+      game.productId,
+      quality
+    );
+  } else {
+    result = Game.completeInspectionOperation(
+      game.itemId,
+      game.operationId,
+      quality
+    );
+  }
+  inspectionState.lastResult = result;
+  resetInspectionMiniGame();
+  refreshFromState();
+}
+
 function handleClick(event) {
   markUserInteraction();
   const actionButtonEarly = event.target.closest("[data-action]");
@@ -640,6 +987,11 @@ function handleClick(event) {
     "#beginner-guide [data-action], #beginner-guide [data-open-app]"
   );
   if (guideActionButton) Game.dismissCurrentGuideStep();
+  const miniGameAction = event.target.closest("[data-minigame-action]");
+  if (miniGameAction) {
+    handleMiniGameClick(miniGameAction);
+    return;
+  }
   if (earlyAction === "new-game") {
     Game.startNewGame();
     renderNicknameScreen();
@@ -668,6 +1020,10 @@ function handleClick(event) {
     togglePause(false);
     Game.startNewGame();
     renderNicknameScreen();
+    return;
+  }
+  if (earlyAction === "toggle-bgm") {
+    toggleBgm();
     return;
   }
 
@@ -757,6 +1113,11 @@ function handleClick(event) {
   if (action === "view-buyer") {
     Game.markBuyerRead();
     openApp("shop");
+    expandShopForBuyerChat();
+    refreshFromState();
+  }
+  if (action === "dismiss-auction-notice") {
+    Game.dismissAuctionNotice();
     refreshFromState();
   }
   if (action === "view-news") {
@@ -886,6 +1247,25 @@ function handleClick(event) {
   }
   if (action === "inspection-tool") {
     inspectionState.activeTool = tool;
+    if (tool === "label-fill" || tool === "forge") {
+      inspectionState.page = "forgery";
+      inspectionState.forgeryDraft = {
+        productId: null,
+        placements: {},
+        errors: 0
+      };
+      inspectionState.activeOperationId = null;
+    }
+    refreshFromState();
+  }
+  if (action === "inspection-operation") {
+    inspectionState.activeOperationId = actionButton.dataset.operationId;
+    const operation = Game.getInspectionOperations(
+      inspectionState.itemId
+    ).find(
+      (candidate) => candidate.id === inspectionState.activeOperationId
+    );
+    inspectionState.activeTool = operation?.toolIds?.[0] ?? null;
     refreshFromState();
   }
   if (action === "inspection-action") {
@@ -896,15 +1276,47 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "inspection-apply-forgery") {
-    inspectionState.lastResult = Game.useInspectionAction(
-      inspectionState.itemId,
-      "apply-forgery",
-      productId
-    );
+    startForgeryMiniGame(inspectionState.itemId, productId);
+    inspectionState.activeTool = null;
+  }
+  if (action === "forgery-back") {
+    inspectionState.page = "main";
+    inspectionState.forgeryDraft = null;
     inspectionState.activeTool = null;
     refreshFromState();
   }
+  if (action === "forgery-select-product") {
+    inspectionState.forgeryDraft ??= {
+      productId: null,
+      placements: {},
+      errors: 0
+    };
+    inspectionState.forgeryDraft.productId = productId;
+    inspectionState.forgeryDraft.placements = {};
+    refreshFromState();
+  }
+  if (action === "apply-forgery") {
+    const draft = inspectionState.forgeryDraft;
+    const placedCount = Object.keys(draft?.placements ?? {}).length;
+    const quality =
+      draft?.errors === 0 && placedCount >= 2
+        ? "perfect"
+        : draft?.errors <= 1
+          ? "qualified"
+          : "rough";
+    inspectionState.lastResult = Game.applyInspectionForgery(
+      inspectionState.itemId,
+      draft?.productId,
+      quality
+    );
+    inspectionState.page = "main";
+    inspectionState.forgeryDraft = null;
+    refreshFromState();
+  }
   if (action === "inspection-research-toggle") {
+    if (!inspectionState.researchOpen) {
+      Game.markInspectionResearchTipSeen();
+    }
     inspectionState.researchOpen = !inspectionState.researchOpen;
     refreshFromState();
   }
@@ -914,17 +1326,10 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "inspection-open-mall") {
+    inspectionState.page = "main";
+    inspectionState.forgeryDraft = null;
     inspectionState.researchOpen = true;
     inspectionState.researchTab = "mall";
-    refreshFromState();
-  }
-  if (action === "inspection-search-keyword") {
-    Game.searchKeyword(itemId, keyword);
-    inspectionState.researchResult = {
-      ...Game.getState().searchResult
-    };
-    inspectionState.researchOpen = true;
-    inspectionState.researchTab = "archive";
     refreshFromState();
   }
   if (action === "main-open-locker") {
@@ -1049,7 +1454,10 @@ function handleClick(event) {
     const tab = actionButton.dataset.tab;
     if (tab !== "inventory") closeInspection();
     Game.getState().activeShopTab = tab;
-    if (tab === "buyers") Game.markBuyerRead();
+    if (tab === "buyers") {
+      Game.markBuyerRead();
+      expandShopForBuyerChat();
+    }
     refreshFromState();
   }
   if (action === "universal-tab") {
@@ -1061,6 +1469,12 @@ function handleClick(event) {
     refreshFromState();
   }
   if (action === "prepare-listing") {
+    const item = Game.getState().inventory.find(
+      (candidate) => candidate.id === itemId
+    );
+    if (isItemInspectionComplete(item)) {
+      Game.markInspectionCompleteTipSeen();
+    }
     Game.prepareListing(itemId);
     refreshFromState();
   }
@@ -1112,6 +1526,30 @@ function handleClick(event) {
 
 function handleRootPointerDown(event) {
   markUserInteraction();
+  const inspectionStage = event.target.closest("[data-inspection-stage]");
+  if (
+    inspectionStage &&
+    inspectionState.activeOperationId &&
+    !event.target.closest("button")
+  ) {
+    inspectionDrag = {
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: 0,
+      startedAt: Date.now()
+    };
+    inspectionStage.classList.add("is-operating");
+    return;
+  }
+  const cleanCell = event.target.closest("[data-minigame-clean-cell]");
+  if (
+    cleanCell &&
+    inspectionMiniGame.active &&
+    ensureMiniGameTool()
+  ) {
+    inspectionMiniGame.draggingClean = true;
+    cleanMiniGameCell(cleanCell);
+  }
   const windowElement = event.target.closest(".os-window");
   if (windowElement) focusWindow(windowElement.dataset.windowId);
 }
@@ -1120,6 +1558,7 @@ function markUserInteraction() {
   lastInteractionAt = Date.now();
   idleReminderArmed = true;
   hideIdleReminder();
+  playBgm();
 }
 
 function getGuideAnchor(guide) {
@@ -1271,10 +1710,14 @@ function openInspection(itemId, returnTab = "inventory", listingId = null) {
   inspectionState.returnTab = returnTab;
   inspectionState.listingId = listingId;
   inspectionState.activeTool = null;
+  inspectionState.activeOperationId = null;
+  inspectionState.page = "main";
+  inspectionState.forgeryDraft = null;
   inspectionState.researchOpen = false;
   inspectionState.researchTab = "archive";
   inspectionState.researchResult = null;
   inspectionState.lastResult = "";
+  resetInspectionMiniGame();
   Game.getState().activeShopTab = "inventory";
   if (!windowState.has("shop")) openApp("shop");
   else focusWindow("shop");
@@ -1287,10 +1730,14 @@ function closeInspection() {
   inspectionState.returnTab = "inventory";
   inspectionState.listingId = null;
   inspectionState.activeTool = null;
+  inspectionState.activeOperationId = null;
+  inspectionState.page = "main";
+  inspectionState.forgeryDraft = null;
   inspectionState.researchOpen = false;
   inspectionState.researchTab = "archive";
   inspectionState.researchResult = null;
   inspectionState.lastResult = "";
+  resetInspectionMiniGame();
   windowState
     .get("shop")
     ?.element.classList.remove("is-inspection-mode");
@@ -1301,6 +1748,23 @@ function expandShopForInspection() {
   if (!entry || !workspace) return;
   const width = Math.min(1120, Math.max(680, workspace.clientWidth - 16));
   const height = Math.min(760, Math.max(520, workspace.clientHeight - 16));
+  entry.element.style.width = `${width}px`;
+  entry.element.style.height = `${height}px`;
+  entry.element.style.left = `${Math.max(
+    8,
+    Math.round((workspace.clientWidth - width) / 2)
+  )}px`;
+  entry.element.style.top = `${Math.max(
+    8,
+    Math.round((workspace.clientHeight - height) / 2)
+  )}px`;
+}
+
+function expandShopForBuyerChat() {
+  const entry = windowState.get("shop");
+  if (!entry || !workspace) return;
+  const width = Math.min(1080, Math.max(760, workspace.clientWidth - 16));
+  const height = Math.min(720, Math.max(560, workspace.clientHeight - 16));
   entry.element.style.width = `${width}px`;
   entry.element.style.height = `${height}px`;
   entry.element.style.left = `${Math.max(
@@ -1509,6 +1973,7 @@ function refreshFromState() {
   updateTaskbar();
   updateClock();
   syncDesktopState();
+  syncBgmForState();
 
   windowState.forEach((entry) => refreshWindow(entry.app.id));
 }
@@ -2563,18 +3028,60 @@ function renderCalendarApp() {
   `;
 }
 
+function renderAuctionNaturalInfo(auction) {
+  const info = auction?.naturalInfo ?? {};
+  const fields = [
+    ["来源", info.sourceLabel ?? "未登记"],
+    ["航线", info.route ?? auction?.destination ?? "未知"],
+    ["寄存", `${Number(info.storageDays) || 0} 天`],
+    ["箱型", info.size ?? "中号硬壳箱"],
+    ["重量", `${Number(info.weightKg || 0).toFixed(1)} kg`],
+    ["封条", info.seal ?? "状态不明"],
+    ["批次", info.batchNumber ?? "未登记"]
+  ];
+  return `
+    <dl class="auction-natural-grid" aria-label="箱子公开信息">
+      ${fields
+        .map(
+          ([label, value]) => `
+            <div>
+              <dt>${escapeHtml(label)}</dt>
+              <dd>${escapeHtml(String(value))}</dd>
+            </div>
+          `
+        )
+        .join("")}
+    </dl>
+  `;
+}
+
+function renderAuctionNotice(notice) {
+  if (!notice) return "";
+  return `
+    <div class="auction-notice" role="alert">
+      <header>
+        <strong>${escapeHtml(notice.title ?? "提示")}</strong>
+        <button type="button" data-action="dismiss-auction-notice" aria-label="关闭拍卖提示">×</button>
+      </header>
+      <p>${escapeHtml(notice.text ?? "")}</p>
+    </div>
+  `;
+}
+
 function renderAuctionApp() {
   const state = Game.getState();
   const auction = state.auction;
   const nextBid = roundBid(auction.currentPrice * 1.1);
+  const insufficientCash = nextBid > state.cash;
   const playerLeading = auction.highBidder === "player";
 
   if (auction.status === "bidding") {
     return `
       <div class="legacy-toolbar"><span>文件</span><span>拍卖</span><span>查看</span><span>帮助</span></div>
       <div class="auction-shell">
+        ${renderAuctionNotice(state.auctionNotice)}
         <section class="auction-list-pane">
-          <header><strong>今日批次</strong><span>第 1 箱</span></header>
+          <header><strong>今日批次</strong><span>第 ${auction.lotNumber} / ${auction.maxLots} 箱</span></header>
           <div class="auction-box-card ${
             auction.storyBox ? "is-story-box" : ""
           }">
@@ -2586,12 +3093,13 @@ function renderAuctionApp() {
         <section class="auction-detail-pane">
           <div class="auction-info">
             <p class="eyebrow">${
-              auction.storyBox ? "特殊私人寄售箱" : "只看得到两条线索"
+              auction.storyBox ? "特殊私人寄售箱" : "公开信息 · 内容尚未确认"
             }</p>
             <h2>${escapeHtml(auction.destination)} · ${escapeHtml(
               auction.appearance
             )}</h2>
             <p>${escapeHtml(auction.appearanceDescription)}</p>
+            ${renderAuctionNaturalInfo(auction)}
             <div class="auction-price">
               <span>当前报价</span>
               <strong class="key-info">${formatCurrency(auction.currentPrice)}</strong>
@@ -2624,8 +3132,12 @@ function renderAuctionApp() {
               </div>
             </div>
             <div class="action-row">
-              <button type="button" class="legacy-button primary" data-action="bid">
-                加价到 ${formatCurrency(nextBid)}
+              <button
+                type="button"
+                class="legacy-button primary ${insufficientCash ? "is-insufficient" : ""}"
+                data-action="bid"
+              >
+                ${insufficientCash ? `余额不足 · 需 ${formatCurrency(nextBid)}` : `加价到 ${formatCurrency(nextBid)}`}
               </button>
               <button type="button" class="legacy-button" data-action="pass-auction">
                 放弃
@@ -2984,7 +3496,33 @@ function getItemVisualProfile(item) {
   return "generic";
 }
 
-function renderPixelArtwork(item, profile) {
+export const PIXEL_ART_PROFILES = [
+  "ring",
+  "flask",
+  "watch",
+  "camera",
+  "paper",
+  "note",
+  "bottle",
+  "compass",
+  "tea",
+  "painting",
+  "stethoscope",
+  "scissors",
+  "sign",
+  "bag",
+  "phone",
+  "radio",
+  "lamp",
+  "toolbox",
+  "case",
+  "generic",
+  "jewelry",
+  "luxury",
+  "appliance"
+];
+
+export function renderPixelArtwork(item, profile) {
   const hash = [...String(item?.templateId ?? item?.name ?? profile)].reduce(
     (total, character) => total + character.charCodeAt(0),
     0
@@ -3187,12 +3725,79 @@ function renderPixelArtwork(item, profile) {
   `;
 }
 
+function getItemArtCandidates(item) {
+  const assetId = item?.templateId ?? item?.id;
+  if (!assetId) return null;
+  const profile = getItemVisualProfile(item);
+  const genericFiles = {
+    ring: "ring.png",
+    flask: "flask.png",
+    watch: "watch.png",
+    camera: "camera.png",
+    paper: "paper.png",
+    note: "paper.png",
+    bottle: "bottle.png",
+    compass: "compass.png",
+    tea: "painting.png",
+    painting: "painting.png",
+    stethoscope: "phone_strap.png",
+    scissors: "starter_box.png",
+    sign: "paper.png",
+    bag: "bag.png",
+    phone: "phone.png",
+    radio: "radio.png",
+    lamp: "lamp.png",
+    toolbox: "starter_box.png",
+    case: "starter_box.png",
+    jewelry: "ring.png",
+    luxury: "painting.png",
+    appliance: "radio.png",
+    generic: "paper.png"
+  };
+  return {
+    primary: `./美术/物品/by-id/${encodeURIComponent(assetId)}.png`,
+    fallback: `./美术/物品/${genericFiles[profile] ?? "paper.png"}`
+  };
+}
+
+function renderItemArtImage(item, fallbackArtwork) {
+  const asset = getItemArtCandidates(item);
+  if (!asset) {
+    return `<div class="item-art-fallback">${fallbackArtwork}</div>`;
+  }
+  return `
+    <img
+      class="item-art-image"
+      src="${escapeHtml(versionedAsset(asset.primary))}"
+      data-fallback="${escapeHtml(versionedAsset(asset.fallback))}"
+      alt="${escapeHtml(item?.name ?? "物品")}"
+      onload="this.nextElementSibling.hidden=true;"
+      onerror="if(this.dataset.fallback){this.src=this.dataset.fallback;this.dataset.fallback='';}else{this.hidden=true;this.nextElementSibling.hidden=false;}"
+    />
+    <div class="item-art-fallback" hidden>${fallbackArtwork}</div>
+  `;
+}
+
 function renderItemVisual(item, options = {}) {
   const inspection = item?.inspection ?? {};
   const profile = getItemVisualProfile(item);
+  const operations = Game.getInspectionOperations(item?.id);
+  const cleanOperation = operations.find(
+    (operation) => operation.type === "clean"
+  );
+  const labelOperation = operations.find(
+    (operation) => operation.type === "compare"
+  );
+  const detailOperation =
+    operations.find((operation) => operation.type === "seam") ??
+    operations.find((operation) => operation.type === "parts") ??
+    operations.find((operation) => operation.type === "choose");
   const cleanLevel = Number(inspection.cleanLevel) || 0;
+  const cleanDone =
+    cleanOperation?.state?.completed === true || cleanLevel >= 4;
   const compact = options.compact === true;
   const interactive = options.interactive !== false;
+  const useBitmap = options.useBitmap === true;
   const detailComplete =
     Array.isArray(item?.facts) &&
     item.facts.length > 0 &&
@@ -3203,7 +3808,14 @@ function renderItemVisual(item, options = {}) {
       compact ? "is-compact" : ""
     }">
       <div class="item-art" aria-hidden="true">
-        ${renderPixelArtwork(item, profile)}
+        ${
+          useBitmap
+            ? renderItemArtImage(item, renderPixelArtwork(item, profile))
+            : `<div class="item-art-fallback">${renderPixelArtwork(
+                item,
+                profile
+              )}</div>`
+        }
       </div>
       <div
         class="item-dirt-layer"
@@ -3215,44 +3827,53 @@ function renderItemVisual(item, options = {}) {
       ></div>
       <div
         class="inspection-hotspot hotspot-clean ${
-          cleanLevel >= 4 ? "is-done" : ""
+          cleanDone ? "is-done" : ""
         }"
         ${
-          interactive && cleanLevel < 4
-            ? 'data-action="inspection-action" data-tool="clean"'
+          interactive && cleanOperation && !cleanDone
+            ? `data-action="inspection-operation" data-item-id="${item.id}" data-operation-id="${cleanOperation.id}"`
             : ""
         }
       >
-        <span>${cleanLevel ? "继续清理" : "表面污渍"}</span>
+        <span>${cleanDone ? "清洁完成" : cleanOperation?.name ?? "表面污渍"}</span>
       </div>
       <div
         class="inspection-hotspot hotspot-label ${
-          inspection.labelChecked ? "is-done" : ""
+          labelOperation?.state?.completed || inspection.labelChecked ? "is-done" : ""
         }"
         ${
-          interactive && !inspection.labelChecked
-            ? 'data-action="inspection-action" data-tool="label-check"'
+          interactive &&
+          labelOperation &&
+          !labelOperation.state?.completed &&
+          !inspection.labelChecked
+            ? `data-action="inspection-operation" data-item-id="${item.id}" data-operation-id="${labelOperation.id}"`
             : ""
         }
       >
-        <span>${inspection.labelChecked ? "标签已检查" : "标签残留"}</span>
+        <span>${
+          labelOperation?.state?.completed || inspection.labelChecked
+            ? "标签处理完成"
+            : labelOperation?.name ?? "标签残留"
+        }</span>
       </div>
       <div
         class="inspection-hotspot hotspot-detail ${
           detailComplete ? "is-done" : ""
         }"
         ${
-          interactive && !detailComplete
-            ? 'data-action="inspection-action" data-tool="detail"'
+          interactive && detailOperation && !detailComplete
+            ? `data-action="inspection-operation" data-item-id="${item.id}" data-operation-id="${detailOperation.id}"`
             : ""
         }
       >
         <span>${
           detailComplete
-            ? "细节已检查"
-            : detailLevel > 0
-              ? `细节检查 ${detailLevel} / 2`
-              : "细节检查"
+            ? "细节处理完成"
+            : detailOperation?.state?.result
+              ? `${detailOperation.name} · ${inspectionQualityLabel(
+                  detailOperation.state.result
+                )}`
+              : detailOperation?.name ?? "细节检查"
         }</span>
       </div>
       ${
@@ -3267,21 +3888,23 @@ function renderItemVisual(item, options = {}) {
 }
 
 function renderInspectionWorkspace(item) {
+  if (inspectionState.page === "forgery") {
+    return renderForgeryWorkspace(item);
+  }
+  const state = Game.getState();
   const inspection = item.inspection ?? {};
+  const operations = Game.getInspectionOperations(item.id);
+  const activeOperation = operations.find(
+    (operation) => operation.id === inspectionState.activeOperationId
+  );
+  const activeToolAsset = activeOperation
+    ? MINIGAME_ART_ASSETS.tools[activeOperation.toolIds?.[0] ?? "cloth"]
+    : null;
+  const showResearchGuide =
+    !state.inspectionResearchTipSeen && !inspectionState.researchOpen;
   const discoveredFacts = (item.facts ?? []).filter(
     (fact) => fact.discovered
   );
-  const availableFakeItems = STAGE_TWO_DATA.mallProducts.filter(
-    (product) =>
-      product.type === "fake" &&
-      (Game.getState().fakeItems?.[product.id] ?? 0) > 0
-  );
-  const displayedFakeItems =
-    inspectionState.activeTool === "label-fill"
-      ? availableFakeItems.filter(
-          (product) => product.forgeryType === "label"
-        )
-      : availableFakeItems;
   return `
     <section class="inspection-workspace">
       <header class="inspection-header">
@@ -3293,10 +3916,52 @@ function renderInspectionWorkspace(item) {
         <span>${inspection.damaged ? "表面有损伤" : "状态可继续检视"}</span>
       </header>
       <div class="inspection-main">
-        <section class="inspection-stage">
-          ${renderItemVisual(item)}
+        <section class="inspection-stage ${
+          inspectionState.activeOperationId ? "has-active-tool" : ""
+        }" data-inspection-stage ${
+          activeToolAsset
+            ? `style="cursor:url('${versionedAsset(
+                activeToolAsset.fallback
+              )}') 16 16, crosshair;"`
+            : ""
+        }>
+          <div class="inspection-tool-rail" aria-label="操作工具">
+            ${operations
+              .map(
+                (operation) => `
+                  <button
+                    type="button"
+                    class="inspection-tool-button ${
+                      inspectionState.activeOperationId === operation.id
+                        ? "is-selected"
+                        : ""
+                    } ${operation.state?.completed ? "is-completed" : ""}"
+                    data-action="inspection-operation"
+                    data-operation-id="${operation.id}"
+                    data-tool-id="${operation.toolIds?.[0] ?? "cloth"}"
+                    title="${escapeHtml(operation.name)}"
+                    aria-label="${escapeHtml(operation.name)}"
+                    ${operation.state?.completed ? "disabled" : ""}
+                  >
+                    ${renderManifestImage(
+                      MINIGAME_ART_ASSETS.tools[
+                        operation.toolIds?.[0] ?? "cloth"
+                      ],
+                      "inspection-tool-icon",
+                      operation.name
+                    )}
+                  </button>
+                `
+              )
+              .join("")}
+          </div>
+          ${renderItemVisual(item, { useBitmap: true })}
           <div class="inspection-stage-caption">
-            <span>点击高亮区域使用对应工具</span>
+            <span>${
+              inspectionState.activeOperationId
+                ? "拖动工具处理物品"
+                : "选择右上角工具"
+            }</span>
             <strong>清洁进度 ${inspection.cleanLevel ?? 0} / 3</strong>
           </div>
         </section>
@@ -3306,38 +3971,6 @@ function renderInspectionWorkspace(item) {
             <button type="button" class="legacy-button" data-action="inspection-tool" data-tool="label-fill">补充标签</button>
             <button type="button" class="legacy-button" data-action="inspection-tool" data-tool="forge">使用伪造物</button>
           </div>
-          ${
-            ["label-fill", "forge"].includes(inspectionState.activeTool)
-              ? `<div class="inspection-forge-list">
-                  <strong>${
-                    inspectionState.activeTool === "label-fill"
-                      ? "选择标签材料"
-                      : "选择伪造物"
-                  }</strong>
-                  ${
-                    displayedFakeItems.length
-                      ? displayedFakeItems
-                          .map(
-                            (product) => `
-                              <button
-                                type="button"
-                                class="legacy-button"
-                                data-action="inspection-apply-forgery"
-                                data-product-id="${product.id}"
-                              >
-                                ${escapeHtml(product.name)} × ${
-                                  Game.getState().fakeItems[product.id]
-                                }
-                              </button>
-                            `
-                          )
-                          .join("")
-                      : `<span class="muted-copy">无库存伪造物。</span>
-                         <button type="button" class="legacy-button" data-action="inspection-open-mall">前往商城购买</button>`
-                  }
-                </div>`
-              : ""
-          }
           <div class="inspection-facts">
             <strong>已发现问题</strong>
             ${
@@ -3361,13 +3994,25 @@ function renderInspectionWorkspace(item) {
               inspection.lastResult || "选择一个工具开始检查。"
             )}</span>
           </div>
-          <button
-            type="button"
-            class="legacy-button primary"
-            data-action="inspection-research-toggle"
-          >
-            ${inspectionState.researchOpen ? "收起万物通参考" : "打开万物通参考"}
-          </button>
+          <div class="inspection-research-action ${
+            showResearchGuide ? "has-guide" : ""
+          }">
+            <button
+              type="button"
+              class="legacy-button primary ${showResearchGuide ? "is-guided" : ""}"
+              data-action="inspection-research-toggle"
+            >
+              ${inspectionState.researchOpen ? "收起万物通参考" : "打开万物通参考"}
+            </button>
+            ${
+              showResearchGuide
+                ? `<span class="inspection-research-tip">
+                    点击这里查看万物通资料
+                    <i aria-hidden="true"></i>
+                  </span>`
+                : ""
+            }
+          </div>
         </aside>
         ${
           inspectionState.researchOpen
@@ -3375,13 +4020,569 @@ function renderInspectionWorkspace(item) {
             : ""
         }
       </div>
+      ${
+        inspectionMiniGame.active
+          ? renderInspectionMiniGame(item)
+          : ""
+      }
     </section>
+  `;
+}
+
+function getForgerySlots(product) {
+  if (!product) return [];
+  if (product.forgeryType === "label") {
+    return [
+      { id: "name", label: "姓名槽", expectedKind: "name" },
+      { id: "code", label: "编号槽", expectedKind: "code" },
+      { id: "source", label: "来源槽", expectedKind: "source" }
+    ];
+  }
+  if (product.forgeryType === "packaging") {
+    return [
+      { id: "packaging", label: "包装槽", expectedKind: "packaging" },
+      { id: "source", label: "托运来源槽", expectedKind: "source" }
+    ];
+  }
+  if (product.forgeryType === "material") {
+    return [{ id: "material", label: "补件槽", expectedKind: "feature" }];
+  }
+  return [
+    { id: "record", label: "交易记录槽", expectedKind: "record" },
+    { id: "source", label: "文件来源槽", expectedKind: "source" }
+  ];
+}
+
+function renderForgeryWorkspace(item) {
+  const availableFakeItems = STAGE_TWO_DATA.mallProducts.filter(
+    (product) =>
+      product.type === "fake" &&
+      (Game.getState().fakeItems?.[product.id] ?? 0) > 0
+  );
+  const draft =
+    inspectionState.forgeryDraft ?? {
+      productId: null,
+      placements: {},
+      errors: 0
+    };
+  const product = availableFakeItems.find(
+    (candidate) => candidate.id === draft.productId
+  );
+  const facts = (item.facts ?? []).filter((fact) => fact.discovered);
+  const factCards = facts.length
+    ? facts
+    : Game.getInspectionKeywordReferences(item.id).map((reference, index) => ({
+        id: `reference_${index}`,
+        kind: reference.kind,
+        label: reference.label,
+        value: reference.value
+      }));
+  const slots = getForgerySlots(product);
+  return `
+    <section class="inspection-workspace forgery-workspace">
+      <header class="inspection-header">
+        <button type="button" class="legacy-button" data-action="forgery-back">返回</button>
+        <div>
+          <p class="eyebrow">伪造工作台</p>
+          <h2>${escapeHtml(item.name)}</h2>
+        </div>
+        <span>拖动工具与资料完成伪造</span>
+      </header>
+      <div class="forgery-layout">
+        <section class="forgery-item-stage" data-forgery-stage>
+          ${renderItemVisual(item, { useBitmap: true })}
+          <div class="forgery-magnifier" data-forgery-magnifier aria-hidden="true"></div>
+          <div class="forgery-stage-hint">拖动放大镜检查物品细节</div>
+        </section>
+        <aside class="forgery-editor">
+          <div class="forgery-products">
+            <strong>选择伪造材料</strong>
+            ${
+              availableFakeItems.length
+                ? availableFakeItems
+                    .map(
+                      (candidate) => `
+                        <button
+                          type="button"
+                          class="forgery-product-card ${
+                            candidate.id === draft.productId
+                              ? "is-selected"
+                              : ""
+                          }"
+                          data-action="forgery-select-product"
+                          data-product-id="${candidate.id}"
+                        >
+                          <span>${escapeHtml(candidate.name)}</span>
+                          <small>库存 ${Game.getState().fakeItems[candidate.id] ?? 0}</small>
+                        </button>
+                      `
+                    )
+                    .join("")
+                : `<span class="muted-copy">无库存伪造物。</span>
+                   <button type="button" class="legacy-button" data-action="inspection-open-mall">前往商城购买</button>`
+            }
+          </div>
+          ${
+            product
+              ? `
+                <div class="forgery-slots">
+                  <strong>${escapeHtml(product.name)} 编辑区</strong>
+                  ${slots
+                    .map((slot) => {
+                      const fact = factCards.find(
+                        (candidate) =>
+                          candidate.id === draft.placements[slot.id]
+                      );
+                      return `
+                        <div
+                          class="forgery-slot"
+                          data-forgery-slot="${slot.id}"
+                          data-expected-kind="${slot.expectedKind}"
+                        >
+                          <span>${escapeHtml(slot.label)}</span>
+                          <b>${
+                            fact
+                              ? `${escapeHtml(fact.label)}：${escapeHtml(
+                                  fact.value
+                                )}`
+                              : "拖入事实卡"
+                          }</b>
+                        </div>
+                      `;
+                    })
+                    .join("")}
+                </div>
+                <div class="forgery-facts">
+                  <strong>万物通事实卡</strong>
+                  ${factCards
+                    .map(
+                      (fact) => `
+                        <button
+                          type="button"
+                          draggable="true"
+                          data-forgery-fact="${fact.id}"
+                          data-fact-kind="${fact.kind}"
+                          data-fact-value="${escapeHtml(fact.value)}"
+                        >
+                          <span>${escapeHtml(fact.label)}</span>
+                          <b>${escapeHtml(fact.value)}</b>
+                        </button>
+                      `
+                    )
+                    .join("")}
+                </div>
+                <button
+                  type="button"
+                  class="legacy-button primary"
+                  data-action="apply-forgery"
+                  ${Object.keys(draft.placements).length ? "" : "disabled"}
+                >完成伪造</button>
+              `
+              : ""
+          }
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function inspectionQualityLabel(quality) {
+  return {
+    perfect: "完美",
+    qualified: "合格",
+    rough: "粗糙"
+  }[quality] ?? "合格";
+}
+
+function resetInspectionMiniGame() {
+  inspectionMiniGame = {
+    active: false,
+    mode: "operation",
+    itemId: null,
+    operationId: null,
+    productId: null,
+    type: null,
+    startedAt: 0,
+    errors: 0,
+    progress: 0,
+    cleanedCells: [],
+    sequenceIndex: 0,
+    selectedPart: null,
+    placedParts: [],
+    options: [],
+    correctOptionId: null,
+    draggingClean: false,
+    activeToolId: null,
+    correctToolId: null,
+    toolIds: [],
+    workbenchFamily: "generic"
+  };
+}
+
+function startInspectionOperationMiniGame(itemId, operationId) {
+  const operations = Game.getInspectionOperations(itemId);
+  const operation = operations.find(
+    (candidate) => candidate.id === operationId
+  );
+  const item = findItemForInspection(itemId);
+  if (!operation || !item) return;
+  inspectionMiniGame = {
+    active: true,
+    mode: "operation",
+    itemId,
+    operationId,
+    productId: null,
+    type: operation.type,
+    startedAt: Date.now(),
+    errors: 0,
+    progress: 0,
+    cleanedCells: [],
+    sequenceIndex: 0,
+    selectedPart: null,
+    placedParts: [],
+    options: createMiniGameOptions(item, operation),
+    correctOptionId: null,
+    draggingClean: false,
+    activeToolId: null,
+    correctToolId: operation.toolIds?.[0] ?? null,
+    toolIds: operation.toolIds ?? [],
+    workbenchFamily: operation.workbenchFamily ?? "generic"
+  };
+  inspectionMiniGame.correctOptionId =
+    inspectionMiniGame.options.find((option) => option.correct)?.id ?? null;
+  refreshFromState();
+}
+
+function startForgeryMiniGame(itemId, productId) {
+  const product = STAGE_TWO_DATA.mallProducts.find(
+    (candidate) => candidate.id === productId && candidate.type === "fake"
+  );
+  const item = findItemForInspection(itemId);
+  if (!product || !item) return;
+  const type =
+    product.forgeryType === "packaging"
+      ? "seam"
+      : product.forgeryType === "material"
+        ? "parts"
+        : product.forgeryType === "source_document"
+          ? "compare"
+          : "choose";
+  inspectionMiniGame = {
+    active: true,
+    mode: "forge",
+    itemId,
+    operationId: null,
+    productId,
+    type,
+    startedAt: Date.now(),
+    errors: 0,
+    progress: 0,
+    cleanedCells: [],
+    sequenceIndex: 0,
+    selectedPart: null,
+    placedParts: [],
+    options: createMiniGameOptions(item, {
+      id: `forge-${product.forgeryType}`,
+      type,
+      name: product.name
+    }),
+    correctOptionId: null,
+    draggingClean: false,
+    activeToolId: null,
+    correctToolId:
+      {
+        label: "label",
+        packaging: "label",
+        material: "tweezers",
+        source: "magnifier"
+      }[product.forgeryType] ?? "magnifier",
+    toolIds:
+      {
+        label: ["label", "magnifier"],
+        packaging: ["label", "polish"],
+        material: ["tweezers", "screwdriver"],
+        source: ["magnifier", "label"]
+      }[product.forgeryType] ?? ["magnifier"],
+    workbenchFamily:
+      Game.getInspectionOperations(itemId)[0]?.workbenchFamily ?? "generic"
+  };
+  inspectionMiniGame.correctOptionId =
+    inspectionMiniGame.options.find((option) => option.correct)?.id ?? null;
+  refreshFromState();
+}
+
+function createMiniGameOptions(item, operation) {
+  if (!["compare", "choose"].includes(operation.type)) return [];
+  const presetOptions = {
+    "apply-oil": ["少量保养油", "大量保养油", "普通清洁剂"],
+    "organize-tag": ["同年代旧标签", "全新打印标签", "无来源标签"],
+    "extract-detail": ["记录可核对的细节", "只记录外观颜色", "忽略来源信息"],
+    "forge-label": ["匹配年份的旧标签", "全新空白标签", "错误店铺印章"],
+    "forge-source": [
+      "日期和印章匹配的来源文件",
+      "缺少印章的复印件",
+      "修改过日期的文件"
+    ]
+  }[operation.id];
+  if (presetOptions) {
+    return presetOptions
+      .map((label, index) => ({
+        id: index === 0 ? "option-correct" : `option-wrong-${index}`,
+        label,
+        correct: index === 0
+      }))
+      .sort(() => Math.random() - 0.5);
+  }
+  const facts = (item.facts ?? []).filter((fact) => fact.value);
+  const correctFact =
+    facts.find((fact) => operation.factKinds?.includes(fact.kind)) ??
+    facts[0];
+  const correctValue =
+    correctFact?.value ??
+    (item.source || item.name || "来源记录一致");
+  const wrongValues = unique([
+    ...facts
+      .filter((fact) => fact.value !== correctValue)
+      .map((fact) => fact.value),
+    "来源记录缺失",
+    "年份与档案不一致"
+  ]).slice(0, 2);
+  return [
+    {
+      id: "option-correct",
+      label: String(correctValue),
+      correct: true
+    },
+    ...wrongValues.map((value, index) => ({
+      id: `option-wrong-${index}`,
+      label: String(value),
+      correct: false
+    }))
+  ].sort(() => Math.random() - 0.5);
+}
+
+function renderManifestImage(asset, className = "", alt = "") {
+  if (!asset) return "";
+  return `<img
+    class="${className}"
+    src="${escapeHtml(versionedAsset(asset.primary))}"
+    data-fallback="${escapeHtml(versionedAsset(asset.fallback))}"
+    alt="${escapeHtml(alt)}"
+    onerror="if(this.dataset.fallback){this.src=this.dataset.fallback;this.dataset.fallback='';}else{this.remove();}"
+  />`;
+}
+
+function renderInspectionMiniGame(item) {
+  const game = inspectionMiniGame;
+  if (!game.active) return "";
+  const operation = game.operationId
+    ? Game.getInspectionOperations(item.id).find(
+        (candidate) => candidate.id === game.operationId
+      )
+    : null;
+  const product = game.productId
+    ? STAGE_TWO_DATA.mallProducts.find(
+        (candidate) => candidate.id === game.productId
+      )
+    : null;
+  const title = product?.name ?? operation?.name ?? "物品处理";
+  const instruction =
+    operation?.instruction ??
+    (game.type === "seam"
+      ? "选择合适工具，按顺序完成封口或拆解。"
+      : game.type === "parts"
+        ? "选择工具，把材料拖回正确位置。"
+        : game.type === "compare"
+          ? "选择放大镜，对照标签和档案找出不一致。"
+          : "选择正确工具，完成贴纸、印章或包装操作。");
+  const benchAsset =
+    MINIGAME_ART_ASSETS.benches[game.workbenchFamily] ??
+    MINIGAME_ART_ASSETS.benches.generic;
+  const tools = (game.toolIds ?? []).map((toolId) => ({
+    id: toolId,
+    ...(MINIGAME_ART_ASSETS.tools[toolId] ?? {})
+  }));
+  return `
+    <div class="inspection-minigame-overlay">
+      <section class="inspection-minigame" role="dialog" aria-label="${escapeHtml(
+        title
+      )}">
+        <header>
+          <div>
+            <p class="eyebrow">${game.mode === "forge" ? "伪造工作台" : "物品工作台"}</p>
+            <h3>${escapeHtml(title)}</h3>
+          </div>
+          <button type="button" data-minigame-action="cancel" aria-label="取消操作">×</button>
+        </header>
+        <p class="minigame-instruction">${escapeHtml(instruction)}</p>
+        <div class="minigame-workbench-layout">
+          <div class="minigame-stage">
+            ${renderManifestImage(
+              benchAsset,
+              "minigame-bench-image",
+              "物品处理台背景"
+            )}
+            <div class="minigame-item-layer">
+              ${renderItemVisual(item, {
+                compact: true,
+                interactive: false,
+                useBitmap: true
+              })}
+            </div>
+            <div class="minigame-body-overlay">
+              ${renderMiniGameBody(game)}
+            </div>
+          </div>
+          <aside class="minigame-tool-rail" aria-label="工具">
+            ${tools
+              .map(
+                (tool) => `
+                  <button
+                    type="button"
+                    class="minigame-tool-button ${
+                      game.activeToolId === tool.id ? "is-selected" : ""
+                    }"
+                    data-minigame-action="tool"
+                    data-tool-id="${tool.id}"
+                    title="${escapeHtml(tool.label ?? tool.id)}"
+                  >
+                    ${renderManifestImage(
+                      tool,
+                      "minigame-tool-icon",
+                      tool.label ?? tool.id
+                    )}
+                    <span>${escapeHtml(tool.label ?? tool.id)}</span>
+                  </button>
+                `
+              )
+              .join("")}
+          </aside>
+        </div>
+        <div class="minigame-status" data-minigame-status>
+          ${renderMiniGameStatus(game)}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderMiniGameStatus(game) {
+  if (!game.activeToolId) return "先选择工具";
+  if (game.type === "clean") {
+    return `清理进度 ${Math.round(game.progress * 100)}%`;
+  }
+  if (game.type === "seam") {
+    return `步骤 ${Math.min(game.sequenceIndex, 3)} / 3`;
+  }
+  if (game.type === "parts") {
+    return `已安装 ${game.placedParts.length} / 3`;
+  }
+  return game.errors ? `错误 ${game.errors} 次` : "核对中";
+}
+
+function renderMiniGameBody(game) {
+  if (game.type === "clean") {
+    return `
+      <div class="minigame-clean-grid" data-minigame-clean-grid>
+        ${Array.from({ length: 30 }, (_, index) => `
+          <button
+            type="button"
+            data-minigame-clean-cell="${index}"
+            aria-label="清理区域 ${index + 1}"
+          ></button>
+        `).join("")}
+      </div>
+    `;
+  }
+  if (game.type === "seam") {
+    return `
+      <div class="minigame-seam-list">
+        ${[
+          ["0", "内侧接缝"],
+          ["1", "卡扣与螺丝"],
+          ["2", "外层封口"]
+        ]
+          .sort(() => Math.random() - 0.5)
+          .map(
+            ([step, label]) => `
+              <button type="button" data-minigame-action="seam" data-step="${step}">
+                ${label}
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+    `;
+  }
+  if (game.type === "parts") {
+    return `
+      <div class="minigame-parts">
+        <div class="minigame-part-list">
+          ${["线路模块", "固定卡扣", "替换零件"]
+            .map(
+              (label, index) => `
+                <button
+                  type="button"
+                  draggable="true"
+                  data-minigame-action="part"
+                  data-minigame-part="part-${index}"
+                  data-minigame-label="${label}"
+                >${label}</button>
+              `
+            )
+            .join("")}
+        </div>
+        <div class="minigame-slot-list">
+          ${["接口 A", "接口 B", "接口 C"]
+            .map(
+              (label, index) => `
+                <div
+                  data-minigame-slot="part-${index}"
+                  data-minigame-action="slot"
+                >${label}</div>
+              `
+            )
+            .join("")}
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="minigame-options">
+      ${game.options
+        .map(
+          (option) => `
+            <button
+              type="button"
+              data-minigame-action="option"
+              data-option-id="${option.id}"
+            >${escapeHtml(option.label)}</button>
+          `
+        )
+        .join("")}
+    </div>
   `;
 }
 
 function renderInspectionResearchDrawer(item) {
   const state = Game.getState();
   const result = inspectionState.researchResult;
+  const displayedResult =
+    result?.specialArchive
+      ? result
+      : {
+      title: `${item.name} · 参考资料`,
+      demand:
+        item.category === "luxury"
+          ? "收藏买家需求较高"
+          : item.category === "junk"
+            ? "普通旧货需求稳定"
+            : "普通买家需求稳定",
+      risk: `当前显示基础来源资料：${
+        item.source ?? "来源描述尚未完全确认"
+      }。下方会自动列出所有可核对补充信息。`
+    };
+  const keywordReferences = Game.getInspectionKeywordReferences(item.id);
   const category = CATEGORY_INFO[item.category]?.name ?? "未知类别";
   const priceMultiplier = Game.getSalePriceMultiplier(item);
   const lowPrice = Math.round(item.baseValue * 0.62 * priceMultiplier);
@@ -3430,45 +4631,46 @@ function renderInspectionResearchDrawer(item) {
                   }</strong>
                 </div>
               </div>
-              <small class="reference-completeness-title">可核对关键词</small>
-              <div class="inspection-keywords">
-                ${(item.keywords ?? [])
-                  .map(
-                    (keyword) => `
-                      <button
-                        type="button"
-                        class="keyword-chip is-searchable"
-                        data-action="inspection-search-keyword"
-                        data-item-id="${item.id}"
-                        data-keyword="${escapeHtml(keyword)}"
-                      >${escapeHtml(keyword)}</button>
-                    `
-                  )
-                  .join("")}
-              </div>
               ${
-                result
-                  ? result.specialArchive
+                displayedResult
+                  ? displayedResult.specialArchive
                     ? `<div class="k12-dossier">
                         <span class="k12-code">${escapeHtml(
-                          result.archiveCode ?? "K-12"
+                          displayedResult.archiveCode ?? "K-12"
                         )}</span>
-                        <strong>${escapeHtml(result.title)}</strong>
-                        <p>${escapeHtml(result.demand)}</p>
-                        <p>${escapeHtml(result.risk)}</p>
+                        <strong>${escapeHtml(displayedResult.title)}</strong>
+                        <p>${escapeHtml(displayedResult.demand)}</p>
+                        <p>${escapeHtml(displayedResult.risk)}</p>
                         ${
-                          result.mainStoryAction === "open-locker"
+                          displayedResult.mainStoryAction === "open-locker"
                             ? `<button type="button" class="legacy-button primary" data-action="main-open-locker">打开旧车站寄存柜</button>`
                             : ""
                         }
                       </div>`
                     : `<div class="inspection-research-result">
-                        <strong>${escapeHtml(result.title)}</strong>
-                        <p>${escapeHtml(result.demand)}</p>
-                        <p>${escapeHtml(result.risk)}</p>
+                        <strong>${escapeHtml(displayedResult.title)}</strong>
+                        <p>${escapeHtml(displayedResult.demand)}</p>
+                        <p>${escapeHtml(displayedResult.risk)}</p>
                       </div>`
-                  : `<span class="muted-copy">点击关键词可以补充更具体的核对资料。</span>`
+                  : ""
               }
+              <small class="reference-completeness-title">可核对关键词</small>
+              <div class="inspection-keyword-references">
+                ${keywordReferences
+                  .map(
+                    (reference) => `
+                      <article class="inspection-keyword-reference">
+                        <header>
+                          <strong>${escapeHtml(reference.keyword)}</strong>
+                          <span>${escapeHtml(reference.label)}</span>
+                        </header>
+                        <b>${escapeHtml(reference.value)}</b>
+                        <p>${escapeHtml(reference.summary)}</p>
+                      </article>
+                    `
+                  )
+                  .join("")}
+              </div>
             `
         }
       </div>
@@ -3567,8 +4769,12 @@ function renderBuyerWorkspace(chat) {
 }
 
 function renderInventoryItem(item, index = 0) {
+  const inspectionCompleteTipSeen =
+    Game.getState().inspectionCompleteTipSeen;
   const isBox = item.type === "box";
   const isClueInventoryItem = Boolean(item.clue && item.hiddenInLining);
+  const inspectionComplete =
+    !isBox && !isClueInventoryItem && isItemInspectionComplete(item);
   const tagSource = item.unlockedTags?.length ? item.unlockedTags : item.keywords ?? [];
   const showViewGuide =
     Game.getState().guideStep === "SHOP" &&
@@ -3580,7 +4786,7 @@ function renderInventoryItem(item, index = 0) {
       item.category === "special" ? "special-item" : ""
     } ${item.storyBox ? "story-inventory-box" : ""} ${
       isClueInventoryItem ? "clue-inventory-item" : ""
-    }">
+    } ${inspectionComplete ? "is-inspection-complete" : ""}">
       ${
         isClueInventoryItem
           ? `<span class="clue-inventory-badge">关键线索 · 等待归档</span>`
@@ -3600,6 +4806,8 @@ function renderInventoryItem(item, index = 0) {
               ? "未打开箱子"
               : isClueInventoryItem
                 ? "必须先自留"
+                : inspectionComplete
+                  ? "已完成检视 · 可上架"
                 : getItemStatusLabel(item.status)
           }</span>
         </div>
@@ -3607,7 +4815,15 @@ function renderInventoryItem(item, index = 0) {
       ${
         isBox
           ? ""
-          : `<p>${escapeHtml(item.description ?? "")}</p>
+          : `<p>${escapeHtml(item.summary ?? item.description ?? "")}</p>
+             ${
+               inspectionComplete && !inspectionCompleteTipSeen
+                 ? `<div class="inspection-complete-note">
+                      <strong>物品已检视完成</strong>
+                      <span>绿色卡片表示资料已整理完，可以直接上架。</span>
+                    </div>`
+                 : ""
+             }
              <div class="keyword-row">
                ${tagSource
                  .slice(0, 2)
@@ -3675,7 +4891,7 @@ function renderInventoryItem(item, index = 0) {
                        <button type="button" class="legacy-button" data-action="report-special" data-item-id="${item.id}">上报</button>`
                     : `<button
                        type="button"
-                       class="legacy-button"
+                       class="legacy-button ${inspectionComplete ? "primary" : ""}"
                        data-action="prepare-listing"
                        data-item-id="${item.id}"
                      >上架</button>
@@ -4067,7 +5283,6 @@ function renderUniversalApp() {
   const state = Game.getState();
   const activeTab = state.universalTab ?? "search";
   return `
-    <div class="legacy-toolbar"><span>文件</span><span>搜索</span><span>商城</span><span>帮助</span></div>
     <div class="universal-shell">
       <div class="universal-search">
         <span>搜索：</span>
@@ -4723,6 +5938,30 @@ function getItemStatusLabel(status) {
   return labels[status] ?? "可用";
 }
 
+function isItemInspectionComplete(item) {
+  const inspection = item?.inspection;
+  const requiredOperationIds = inspection?.requiredOperationIds;
+  if (
+    Array.isArray(requiredOperationIds) &&
+    requiredOperationIds.length > 0
+  ) {
+    return requiredOperationIds.every(
+      (id) => inspection.operations?.[id]?.completed === true
+    ) || Boolean(
+      Number(inspection.cleanLevel) >= 3 &&
+      inspection.labelChecked === true &&
+      Number(inspection.detailLevel) >= 2
+    );
+  }
+  return Boolean(
+    item &&
+      inspection &&
+      Number(inspection.cleanLevel) >= 3 &&
+      inspection.labelChecked === true &&
+      Number(inspection.detailLevel) >= 2
+  );
+}
+
 function roundBid(value) {
   return Math.max(10, Math.round(value / 10) * 10);
 }
@@ -4750,6 +5989,106 @@ function announce(message) {
   window.setTimeout(() => {
     liveRegion.textContent = message;
   }, 20);
+}
+
+function getDesiredBgmTrack() {
+  if (uiScreen === "MENU" || uiScreen === "NICKNAME") return "menu";
+  const state = Game.getState();
+  const storyStage = state.mainStory?.stage;
+  const caseActive =
+    state.folderView === "clues" ||
+    ["act1", "act2", "act3", "resolved"].includes(storyStage) ||
+    Boolean(state.ending);
+  return caseActive ? "case" : "day";
+}
+
+function ensureBgmAudio() {
+  if (bgmAudio || typeof Audio === "undefined") return bgmAudio;
+  bgmAudio = new Audio();
+  bgmAudio.loop = true;
+  bgmAudio.preload = "auto";
+  bgmAudio.volume = BGM_VOLUME;
+  return bgmAudio;
+}
+
+function setBgmTrack(trackKey, options = {}) {
+  const audio = ensureBgmAudio();
+  if (!audio || !BGM_TRACKS[trackKey]) return;
+  if (bgmTrackKey === trackKey) {
+    if (options.play && bgmEnabled) playBgm();
+    updateBgmButton();
+    return;
+  }
+
+  if (bgmFadeTimer) {
+    window.clearInterval(bgmFadeTimer);
+    bgmFadeTimer = null;
+  }
+
+  const applyTrack = () => {
+    audio.src = BGM_TRACKS[trackKey];
+    bgmTrackKey = trackKey;
+    audio.volume = bgmEnabled ? BGM_VOLUME : 0;
+    if (bgmEnabled && options.play) audio.play().catch(() => {});
+    updateBgmButton();
+  };
+
+  if (!audio.src || audio.paused) {
+    applyTrack();
+    return;
+  }
+
+  const startVolume = audio.volume;
+  const startedAt = performance.now();
+  bgmFadeTimer = window.setInterval(() => {
+    const progress = Math.min(1, (performance.now() - startedAt) / 320);
+    audio.volume = startVolume * (1 - progress);
+    if (progress >= 1) {
+      window.clearInterval(bgmFadeTimer);
+      bgmFadeTimer = null;
+      audio.pause();
+      applyTrack();
+    }
+  }, 24);
+}
+
+function playBgm() {
+  const audio = ensureBgmAudio();
+  if (!audio || !bgmEnabled) return;
+  audio.volume = BGM_VOLUME;
+  audio.play().catch(() => {});
+  updateBgmButton();
+}
+
+function toggleBgm() {
+  bgmEnabled = !bgmEnabled;
+  const audio = ensureBgmAudio();
+  if (bgmEnabled) {
+    playBgm();
+  } else if (audio) {
+    audio.pause();
+    audio.volume = 0;
+  }
+  updateBgmButton();
+}
+
+function updateBgmButton() {
+  const button = document.querySelector("#bgm-toggle");
+  const label = document.querySelector("#bgm-toggle-label");
+  if (!button || !label) return;
+  button.classList.toggle("is-muted", !bgmEnabled);
+  button.dataset.bgmTrack = bgmTrackKey ?? "";
+  button.setAttribute(
+    "aria-label",
+    bgmEnabled ? "关闭背景音乐" : "打开背景音乐"
+  );
+  label.textContent = bgmEnabled ? "BGM 开" : "BGM 关";
+}
+
+function syncBgmForState() {
+  if (uiScreen !== "DESKTOP") return;
+  setBgmTrack(getDesiredBgmTrack(), { play: true });
+  updateBgmButton();
 }
 
 function renderHighlightedText(value, terms = []) {

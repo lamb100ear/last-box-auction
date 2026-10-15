@@ -1,4 +1,10 @@
-import { CONFIG, STAGE_TWO_DATA } from "./data.js?v=20260923-17";
+import {
+  AUCTION_BOX_GENERATION,
+  CONFIG,
+  ITEM_COMPOSITION_POOLS,
+  ITEM_TEMPLATES,
+  STAGE_TWO_DATA
+} from "./data.js?v=20261007-7";
 
 const SAVE_VERSION = 3;
 const DAY_START = 8 * 60;
@@ -19,17 +25,7 @@ export const Game = {
       const parsed = JSON.parse(raw);
       if (parsed.version !== SAVE_VERSION) return false;
       normalizeState(parsed);
-      if (
-        parsed.day > 1 &&
-        parsed.auction?.day !== parsed.day &&
-        parsed.guideStep === "DONE"
-      ) {
-        parsed.auction = createAuctionState(
-          pickDailyAuctionBox(),
-          parsed.day,
-          1
-        );
-      }
+      ensureAuctionQueue(parsed, parsed.day);
       parsed.dailyLedger ??= [];
       parsed.troubleReasons ??= [];
       parsed.troubleReductionUsed ??= false;
@@ -142,17 +138,45 @@ export const Game = {
     commit();
   },
 
+  markInspectionResearchTipSeen() {
+    if (!state.inspectionResearchTipSeen) {
+      state.inspectionResearchTipSeen = true;
+      commit();
+    }
+  },
+
+  markInspectionCompleteTipSeen() {
+    if (!state.inspectionCompleteTipSeen) {
+      state.inspectionCompleteTipSeen = true;
+      commit();
+    }
+  },
+
+  dismissAuctionNotice() {
+    if (!state.auctionNotice) return;
+    state.auctionNotice = null;
+    commit();
+  },
+
   placeBid() {
     const auction = state.auction;
     if (auction.status !== "bidding") return;
 
     const nextBid = roundBid(auction.currentPrice * 1.1);
     if (nextBid > state.cash) {
+      state.auctionNotice = {
+        type: "insufficient-cash",
+        title: "余额不足，无法继续加价",
+        text: `下一次加价需要 ${formatCurrency(
+          nextBid
+        )}，当前现金只有 ${formatCurrency(state.cash)}。`
+      };
       state.lastMessage = "现金不足，无法继续加价。";
       commit();
       return;
     }
 
+    state.auctionNotice = null;
     state.cash -= 0;
     auction.currentPrice = nextBid;
     auction.highBidder = "player";
@@ -298,10 +322,22 @@ export const Game = {
   nextAuctionLot() {
     const current = state.auction;
     if (current.lotNumber >= current.maxLots) return;
+    const nextTemplate =
+      state.auctionQueue?.[current.lotNumber] ??
+      createGeneratedAuctionBox({
+        day: state.day,
+        lotNumber: current.lotNumber + 1,
+        random: Math.random,
+        tier: pickAuctionTier(Math.random, state.day),
+        templates: getComposableItemTemplates(),
+        recentTemplateIds: state.itemGeneration?.recentTemplateIds ?? [],
+        recentCombinationKeys: state.itemGeneration?.recentCombinationKeys ?? []
+      });
     state.auction = createAuctionState(
-      pickDailyAuctionBox(),
+      nextTemplate,
       state.day,
-      current.lotNumber + 1
+      current.lotNumber + 1,
+      current.maxLots
     );
     state.lastMessage = `第 ${state.auction.lotNumber} 箱已经上架。`;
     commit();
@@ -1793,11 +1829,7 @@ export const Game = {
     state.listingDraft = null;
     state.loanTakenToday = false;
     state.troubleReductionUsed = false;
-    state.auction = createAuctionState(
-      pickAuctionBoxForDay(),
-      state.day,
-      1
-    );
+    prepareAuctionDay(state, state.day);
     state.lastMessage = saleMessage;
     state.dailyLedger = [];
     state.statusNotice = null;
@@ -2044,6 +2076,183 @@ export const Game = {
     return getSalePriceMultiplier(item);
   },
 
+  getInspectionKeywordReferences(itemId) {
+    const target = findMutableOwnedItem(itemId);
+    const item = target?.item;
+    if (!item) return [];
+    normalizeItemData(item);
+    const references = [];
+    const seen = new Set();
+    (item.keywords ?? []).forEach((keyword, index) => {
+      const kind = getFactKind(keyword, index);
+      const exactFact = (item.facts ?? []).find(
+        (fact) => fact.keyword === keyword
+      );
+      const fallbackFact = (item.facts ?? []).find(
+        (fact) =>
+          fact.kind === kind &&
+          !seen.has(`${fact.kind}:${String(fact.value ?? "").trim()}`)
+      );
+      const fact = exactFact ?? fallbackFact;
+      const value = fact?.value ?? keyword;
+      const referenceKey = `${kind}:${String(value).trim()}`;
+      if (seen.has(referenceKey)) return;
+      seen.add(referenceKey);
+      const evidence = buildSearchEvidence(item, keyword, fact)[0];
+      references.push({
+        keyword,
+        kind,
+        label: fact?.label ?? getFactLabel(kind),
+        value,
+        summary:
+          evidence?.body ??
+          `${fact?.label ?? getFactLabel(kind)}：${value}。`
+      });
+    });
+    return references;
+  },
+
+  getInspectionOperations(itemId) {
+    const target = findMutableOwnedItem(itemId);
+    const item = target?.item;
+    if (!item) return [];
+    normalizeItemData(item);
+    const family = getInspectionOperationFamily(item);
+    return getInspectionOperationProfiles(item).map((operation) => ({
+      ...operation,
+      workbenchFamily: family,
+      state: item.inspection?.operations?.[operation.id] ?? null
+    }));
+  },
+
+  completeInspectionOperation(itemId, operationId, quality = "qualified") {
+    const target = findMutableOwnedItem(itemId);
+    const item = target?.item;
+    if (!item) return "没有找到该物品。";
+    normalizeItemData(item);
+    const operation = getInspectionOperationProfiles(item).find(
+      (candidate) => candidate.id === operationId
+    );
+    if (!operation) return "该操作不适用于这件物品。";
+    const inspection = item.inspection;
+    const previous = inspection.operations[operation.id] ?? {
+      attempts: 0,
+      completed: false,
+      result: null
+    };
+    if (previous.completed) {
+      return `${operation.name}已经完成。`;
+    }
+    const attempts = previous.attempts + 1;
+    const isCleanOperation = operation.type === "clean";
+    const nextCleanLevel = isCleanOperation
+      ? inspection.cleanLevel + 1
+      : inspection.cleanLevel;
+    const completed =
+      isCleanOperation
+        ? nextCleanLevel >= 3
+        : quality !== "rough" || attempts >= 2;
+    const resultState = {
+      attempts,
+      completed,
+      result: quality,
+      completedAt: completed ? state.day : null
+    };
+    inspection.operations[operation.id] = resultState;
+
+    const revealCount =
+      quality === "perfect" ? 2 : quality === "qualified" ? 1 : 1;
+    const revealed = [];
+    for (let index = 0; index < revealCount; index += 1) {
+      const fact = revealNextInspectionFact(
+        item,
+        operation.factKinds ?? []
+      );
+      if (!fact) break;
+      revealed.push(`${fact.label}：${fact.value}`);
+    }
+
+    if (operation.type === "clean") {
+      inspection.cleanLevel = nextCleanLevel;
+      if (
+        inspection.cleanLevel > 3 &&
+        quality !== "perfect" &&
+        !item.clue
+      ) {
+        inspection.damaged = true;
+        item.baseValue = Math.max(10, roundToTen(item.baseValue * 0.94));
+        recordTrouble(1, "清洁操作损伤物品");
+      }
+    }
+    if (operation.type === "compare" || operation.id.includes("label")) {
+      inspection.labelChecked = true;
+      item.tagConfidence = item.inspection?.appliedForgery
+        ? "low"
+        : item.unlockedTags?.length
+          ? "high"
+          : "medium";
+    }
+    if (
+      ["seam", "parts", "choose"].includes(operation.type) ||
+      operation.factKinds?.includes("feature")
+    ) {
+      inspection.detailLevel = Math.min(2, inspection.detailLevel + 1);
+    }
+
+    if (quality === "perfect") {
+      item.baseValue = roundToTen(item.baseValue * 1.03);
+    } else if (quality === "rough") {
+      item.baseValue = Math.max(10, roundToTen(item.baseValue * 0.97));
+    }
+
+    inspection.lastResult =
+      `${operation.name}完成，评价：${inspectionQualityLabel(quality)}。` +
+      (revealed.length ? `确认了${revealed.join("；")}。` : "");
+    if (
+      inspection.requiredOperationIds.every(
+        (id) => inspection.operations[id]?.completed
+      )
+    ) {
+      item.status = "researched";
+    }
+    advanceInspectionTime(8);
+    if (target.listing) target.listing.itemSnapshot = item;
+    commit();
+    return inspection.lastResult;
+  },
+
+  applyInspectionForgery(itemId, productId, quality = "qualified") {
+    const target = findMutableOwnedItem(itemId);
+    const item = target?.item;
+    const product = STAGE_TWO_DATA.mallProducts.find(
+      (candidate) => candidate.id === productId && candidate.type === "fake"
+    );
+    if (!item || !product) return "没有可用的伪造材料。";
+    if ((state.fakeItems?.[product.id] ?? 0) <= 0) {
+      return "没有可用的伪造材料。";
+    }
+    normalizeItemData(item);
+    state.fakeItems[product.id] -= 1;
+    item.inspection.appliedForgery = {
+      productId: product.id,
+      name: product.name,
+      forgeryType: product.forgeryType,
+      exposureChance:
+        product.exposureChance *
+        (quality === "perfect" ? 0.78 : quality === "rough" ? 1.28 : 1),
+      quality
+    };
+    item.tagConfidence = "low";
+    item.inspection.lastResult = `${product.name}已经应用，伪造评价：${
+      inspectionQualityLabel(quality)
+    }。`;
+    recordArchetypeProgress("risk");
+    advanceInspectionTime(8);
+    if (target.listing) target.listing.itemSnapshot = item;
+    commit();
+    return item.inspection.lastResult;
+  },
+
   getFolderCaseLabel() {
     return ["?", "疑点", "线索", "证物"][
       Math.max(0, Math.min(3, Number(state.folderCaseStage) || 0))
@@ -2075,6 +2284,14 @@ export const Game = {
 };
 
 function createInitialState() {
+  const runSeed = createRandomSeed();
+  const dailyAuction = createDailyAuctionQueue({
+    day: 1,
+    runSeed,
+    story: null,
+    recentTemplateIds: [],
+    recentCombinationKeys: []
+  });
   return {
     version: SAVE_VERSION,
     nickname: "",
@@ -2091,6 +2308,9 @@ function createInitialState() {
     },
     guideStep: "MAIL",
     guidePopupDismissedSteps: [],
+    inspectionResearchTipSeen: false,
+    inspectionCompleteTipSeen: false,
+    auctionNotice: null,
     calendarOpened: false,
     folderOpened: false,
     newsRead: false,
@@ -2109,7 +2329,20 @@ function createInitialState() {
     arrested: false,
     ending: null,
     mainStory: createMainStoryState(),
-    auction: createAuctionState(STAGE_TWO_DATA.auctionBox, 1, 1),
+    itemGeneration: {
+      runSeed,
+      recentTemplateIds: dailyAuction.recentTemplateIds,
+      recentCombinationKeys: dailyAuction.recentCombinationKeys,
+      currentBoxProtagonist: null
+    },
+    auctionQueue: dailyAuction.queue,
+    auctionQueueDay: 1,
+    auction: createAuctionState(
+      dailyAuction.queue[0],
+      1,
+      1,
+      dailyAuction.queue.length
+    ),
     inventory: [createStarterItem()],
     folder: [createFolderItem(), createClueItem()],
     folderCaseStage: 0,
@@ -2222,6 +2455,10 @@ function normalizeState(parsed) {
     : [];
   if (parsed.auction?.items) {
     parsed.auction.items = parsed.auction.items.map(normalizeItemData);
+    parsed.auction.naturalInfo = normalizeAuctionNaturalInfo(
+      parsed.auction,
+      parsed.day
+    );
     if (parsed.auction.status === "onsite-preview") {
       parsed.auction.items = parsed.auction.items.map((item) => ({
         ...item,
@@ -2232,6 +2469,29 @@ function normalizeState(parsed) {
       }));
     }
   }
+  parsed.itemGeneration ??= {};
+  parsed.itemGeneration.runSeed ??= createRandomSeed();
+  parsed.itemGeneration.recentTemplateIds = Array.isArray(
+    parsed.itemGeneration.recentTemplateIds
+  )
+    ? parsed.itemGeneration.recentTemplateIds.filter(Boolean)
+    : [];
+  parsed.itemGeneration.recentCombinationKeys = Array.isArray(
+    parsed.itemGeneration.recentCombinationKeys
+  )
+    ? parsed.itemGeneration.recentCombinationKeys.filter(Boolean)
+    : [];
+  parsed.itemGeneration.currentBoxProtagonist ??= null;
+  parsed.auctionQueue = Array.isArray(parsed.auctionQueue)
+    ? parsed.auctionQueue.map((box) => ({
+        ...box,
+        naturalInfo: normalizeAuctionNaturalInfo(box, parsed.day),
+        items: Array.isArray(box?.items)
+          ? box.items.map(normalizeItemData)
+          : []
+      }))
+    : [];
+  parsed.auctionQueueDay = Number(parsed.auctionQueueDay) || parsed.day;
   if (parsed.onsiteSearchItem) {
     parsed.onsiteSearchItem = normalizeItemData(parsed.onsiteSearchItem);
   }
@@ -2240,6 +2500,11 @@ function normalizeState(parsed) {
   )
     ? parsed.guidePopupDismissedSteps
     : [];
+  parsed.inspectionResearchTipSeen =
+    parsed.inspectionResearchTipSeen === true;
+  parsed.inspectionCompleteTipSeen =
+    parsed.inspectionCompleteTipSeen === true;
+  parsed.auctionNotice ??= null;
   parsed.nextPayment ??= {
     amount: CONFIG.firstPayment,
     dueDay: CONFIG.paymentIntervalDays
@@ -2491,17 +2756,20 @@ function normalizeBuyerChat(chat, sourceState) {
   );
 }
 
-function createAuctionState(template, day, lotNumber) {
+function createAuctionState(template, day, lotNumber, totalLots = 2) {
   return {
     templateId: template.id,
     storyBox: template.storyBox === true,
+    tierId: template.tierId ?? null,
+    generationSeed: template.generationSeed ?? null,
     day,
     lotNumber,
-    maxLots: 2,
+    maxLots: Math.max(1, Number(totalLots) || 2),
     status: "bidding",
     destination: template.destination,
     appearance: template.appearance,
     appearanceDescription: template.appearanceDescription,
+    naturalInfo: normalizeAuctionNaturalInfo(template, day),
     startingPrice: template.startingPrice,
     currentPrice: template.startingPrice,
     highBidder: template.competitors[0].id,
@@ -2542,31 +2810,40 @@ function createClueItem() {
   };
 }
 
-function initializeItem(item) {
+function initializeItem(item, options = {}) {
+  const random =
+    typeof options.random === "function" ? options.random : Math.random;
+  const composition = options.composition ?? item.composition ?? null;
   const initialized = {
     ...item,
-    code: item.code ?? makeItemCode(item),
+    templateId: item.templateId ?? item.id,
+    composition,
+    imageKey: item.imageKey ?? item.templateId ?? item.id,
+    summary: item.summary ?? getItemSummary(item),
+    code: item.code ?? makeItemCode(item, random),
     source: item.source ?? getItemProvenance(item),
     discoveredCode: false,
     discoveredSource: false
   };
-  initialized.facts = generateItemFacts(initialized);
+  initialized.facts = generateItemFacts(initialized, random);
   if (
     !initialized.effect &&
+    initialized.effectRolled !== true &&
     !["special", "collection"].includes(initialized.category) &&
-    Math.random() < 0.35
+    random() < 0.35
   ) {
     const effect =
       STAGE_TWO_DATA.itemEffectPool[
-        Math.floor(Math.random() * STAGE_TWO_DATA.itemEffectPool.length)
+        Math.floor(random() * STAGE_TWO_DATA.itemEffectPool.length)
       ];
     initialized.effect = effect.effect;
     initialized.effectKey = effect.effectKey;
   }
+  initialized.effectRolled = true;
   return initialized;
 }
 
-function generateItemFacts(item) {
+function generateItemFacts(item, random = Math.random) {
   const existing = Array.isArray(item.facts) ? item.facts : [];
   const keywordFacts = (item.keywords ?? []).map((keyword, index) => {
     const kind = getFactKind(keyword, index);
@@ -2595,26 +2872,26 @@ function generateItemFacts(item) {
       id: `${item.id}_fact_record`,
       kind: "record",
       label: "公开交易记录",
-      value: Math.random() < 0.45 ? "有" : "没有"
+      value: random() < 0.45 ? "有" : "没有"
     },
     {
       id: `${item.id}_fact_packaging`,
       kind: "packaging",
       label: "包装与托运标签",
-      value: Math.random() < 0.55 ? "包装还在" : "包装丢失"
+      value: random() < 0.55 ? "包装还在" : "包装丢失"
     },
     {
       id: `${item.id}_fact_owner`,
       kind: "owner",
       label: "上一任主人",
-      value: Math.random() < 0.4 ? "身份明确" : "身份不明确"
+      value: random() < 0.4 ? "身份明确" : "身份不明确"
     },
     {
       id: `${item.id}_fact_urgency`,
       kind: "urgency",
       label: "出售紧迫程度",
       value:
-        Math.random() < 0.5 ? "需要尽快出手" : "可以长期等待"
+        random() < 0.5 ? "需要尽快出手" : "可以长期等待"
     }
   ].map((fact) => {
     const previous = existing.find(
@@ -2628,7 +2905,21 @@ function generateItemFacts(item) {
       discovered: previous?.discovered === true
     };
   });
-  return [...keywordFacts, ...secondaryFacts];
+  const mergedFacts = [];
+  const factIndex = new Map();
+  [...keywordFacts, ...secondaryFacts].forEach((fact) => {
+    const key = `${fact.kind}:${String(fact.value ?? "").trim()}`;
+    const existingFact = factIndex.get(key);
+    if (existingFact) {
+      existingFact.discovered =
+        existingFact.discovered || fact.discovered === true;
+      return;
+    }
+    const nextFact = { ...fact };
+    factIndex.set(key, nextFact);
+    mergedFacts.push(nextFact);
+  });
+  return mergedFacts;
 }
 
 function normalizeItemData(item) {
@@ -2642,6 +2933,10 @@ function normalizeItemData(item) {
   item.keywords = Array.isArray(item.keywords)
     ? item.keywords.filter(Boolean).map(String)
     : [];
+  item.templateId = item.templateId || item.id;
+  item.imageKey = item.imageKey || item.templateId;
+  item.summary = item.summary || getItemSummary(item);
+  item.composition ??= null;
   item.code = item.code || makeItemCode(item);
   item.source = item.source || getItemProvenance(item);
   item.facts = generateItemFacts(item);
@@ -2655,20 +2950,28 @@ function normalizeItemData(item) {
     0,
     Number(item.acquisitionCost) || 0
   );
+  const previousInspection = item.inspection ?? {};
   item.inspection = {
     cleanLevel: Math.max(
       0,
-      Number(item.inspection?.cleanLevel) || 0
+      Number(previousInspection.cleanLevel) || 0
     ),
-    labelChecked: item.inspection?.labelChecked === true,
+    labelChecked: previousInspection.labelChecked === true,
     detailLevel: Math.max(
       0,
-      Math.min(2, Number(item.inspection?.detailLevel) || 0)
+      Math.min(2, Number(previousInspection.detailLevel) || 0)
     ),
-    damaged: item.inspection?.damaged === true,
-    appliedForgery: item.inspection?.appliedForgery ?? null,
-    lastResult: item.inspection?.lastResult ?? ""
+    damaged: previousInspection.damaged === true,
+    appliedForgery: previousInspection.appliedForgery ?? null,
+    lastResult: previousInspection.lastResult ?? "",
+    operations:
+      previousInspection.operations &&
+      typeof previousInspection.operations === "object"
+        ? previousInspection.operations
+        : {}
   };
+  item.inspection.requiredOperationIds = getInspectionOperationProfiles(item)
+    .map((operation) => operation.id);
   item.discoveredCode =
     item.discoveredCode === true ||
     item.facts.some((fact) => fact.kind === "code" && fact.discovered);
@@ -2710,6 +3013,7 @@ function getAllOwnedItems() {
     ...state.inventory,
     ...state.folder,
     ...(state.auction?.items ?? []),
+    ...(state.auctionQueue ?? []).flatMap((box) => box?.items ?? []),
     ...state.listings.map((listing) => listing.itemSnapshot)
   ];
   const boxItems = state.inventory.flatMap((item) =>
@@ -2762,11 +3066,11 @@ function hashString(value) {
   return hash;
 }
 
-function makeItemCode(item) {
+function makeItemCode(item, random = Math.random) {
   const prefix =
     item.name?.match(/[A-Za-z]/)?.[0]?.toUpperCase() ??
-    ["R", "K", "M", "X", "L"][Math.floor(Math.random() * 5)];
-  return `${prefix}-${Math.floor(10000 + Math.random() * 89999)}`;
+    ["R", "K", "M", "X", "L"][Math.floor(random() * 5)];
+  return `${prefix}-${Math.floor(10000 + random() * 89999)}`;
 }
 
 function makeDistinctCode(excluded) {
@@ -2777,21 +3081,470 @@ function makeDistinctCode(excluded) {
   return code;
 }
 
-function pickDailyAuctionBox() {
-  const boxes = STAGE_TWO_DATA.dailyAuctionBoxes;
-  return boxes[Math.floor(Math.random() * boxes.length)];
+function createRandomSeed() {
+  return `${Date.now().toString(36)}_${Math.floor(
+    Math.random() * 0x7fffffff
+  ).toString(36)}`;
 }
 
-function pickAuctionBoxForDay() {
-  const story = state.mainStory;
-  if (
-    story &&
-    !story.specialBoxWon &&
-    state.day >= STAGE_TWO_DATA.mainStory.startDay
-  ) {
-    return STAGE_TWO_DATA.mainStory.specialBox;
+function createSeededRandom(seed) {
+  let value = hashString(String(seed)) || 1;
+  return function random() {
+    value += 0x6d2b79f5;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomInt(random, min, max) {
+  const low = Math.ceil(Math.min(min, max));
+  const high = Math.floor(Math.max(min, max));
+  return low + Math.floor(random() * (high - low + 1));
+}
+
+function randomRange(random, min, max) {
+  const low = Number(min) || 0;
+  const high = Number(max) || low;
+  return low + random() * (high - low);
+}
+
+function pickWeighted(random, items, weightSelector = (item) => item.weight ?? 1) {
+  const pool = (items ?? []).filter(Boolean);
+  if (!pool.length) return null;
+  const total = pool.reduce(
+    (sum, item) => sum + Math.max(0, Number(weightSelector(item)) || 0),
+    0
+  );
+  if (total <= 0) {
+    return pool[Math.floor(random() * pool.length)];
   }
-  return pickDailyAuctionBox();
+  let roll = random() * total;
+  for (const item of pool) {
+    roll -= Math.max(0, Number(weightSelector(item)) || 0);
+    if (roll <= 0) return item;
+  }
+  return pool[pool.length - 1];
+}
+
+function uniqueList(values) {
+  return [...new Set((values ?? []).filter(Boolean))];
+}
+
+function createDailyAuctionQueue({
+  day,
+  runSeed,
+  story,
+  recentTemplateIds = [],
+  recentCombinationKeys = []
+}) {
+  const random = createSeededRandom(`${runSeed}:day:${day}:auction`);
+  const targetCount = randomInt(
+    random,
+    AUCTION_BOX_GENERATION.minLots,
+    AUCTION_BOX_GENERATION.maxLots
+  );
+  const storyDue = Boolean(
+    story &&
+      !story.specialBoxWon &&
+      day >= STAGE_TWO_DATA.mainStory.startDay
+  );
+  const generatedCount = storyDue ? Math.max(1, targetCount - 1) : targetCount;
+  const queue = [];
+  const recentTemplates = [...recentTemplateIds];
+  const recentCombinations = [...recentCombinationKeys];
+  const templates = getComposableItemTemplates();
+
+  for (let index = 0; index < generatedCount; index += 1) {
+    const lotNumber = storyDue ? index + 2 : index + 1;
+    const tier = pickAuctionTier(random, day);
+    const generated = createGeneratedAuctionBox({
+      day,
+      lotNumber,
+      random,
+      tier,
+      templates,
+      recentTemplateIds: recentTemplates,
+      recentCombinationKeys: recentCombinations
+    });
+    queue.push(generated);
+    recentTemplates.push(...generated.usedTemplateIds);
+    recentCombinations.push(...generated.usedCombinationKeys);
+  }
+
+  if (storyDue) {
+    queue.unshift(createStoryAuctionBox(day));
+  }
+
+  return {
+    queue,
+    recentTemplateIds: uniqueList(recentTemplates).slice(-18),
+    recentCombinationKeys: uniqueList(recentCombinations).slice(-26)
+  };
+}
+
+function pickAuctionTier(random, day) {
+  const tiers = AUCTION_BOX_GENERATION.tiers.filter((tier) => {
+    if (day === 1 && tier.id === "high") return false;
+    if (day <= 3 && tier.id === "high") return false;
+    return true;
+  });
+  return pickWeighted(
+    random,
+    tiers,
+    (tier) => tier.weight * (day > 6 && tier.id === "high" ? 1.15 : 1)
+  );
+}
+
+function getComposableItemTemplates() {
+  const sourceItems = [
+    ...STAGE_TWO_DATA.dailyAuctionBoxes.flatMap((box) => box.items ?? []),
+    ...STAGE_TWO_DATA.starterItems,
+    ...ITEM_TEMPLATES
+  ];
+  const templates = new Map();
+  sourceItems.forEach((item) => {
+    if (
+      !item ||
+      item.category === "collection" ||
+      item.clue ||
+      item.sellable === false
+    ) {
+      return;
+    }
+    const templateId = item.templateId ?? item.id ?? item.name;
+    if (!templateId || templates.has(templateId)) return;
+    templates.set(templateId, {
+      ...item,
+      templateId,
+      keywords: Array.isArray(item.keywords) ? [...item.keywords] : []
+    });
+  });
+  return [...templates.values()];
+}
+
+function createGeneratedAuctionBox({
+  day,
+  lotNumber,
+  random,
+  tier,
+  templates,
+  recentTemplateIds = [],
+  recentCombinationKeys = []
+}) {
+  const route = pickWeighted(
+    random,
+    AUCTION_BOX_GENERATION.routes.map((label) => ({ label, weight: 1 }))
+  ).label;
+  const size = pickWeighted(random, AUCTION_BOX_GENERATION.sizes);
+  const seal = pickWeighted(random, AUCTION_BOX_GENERATION.seals);
+  const appearance = pickWeighted(random, AUCTION_BOX_GENERATION.appearances);
+  const startingPrice = Math.round(
+    randomRange(random, tier.minPrice, tier.maxPrice) / 10
+  ) * 10;
+  const itemCount = randomInt(random, tier.itemCount[0], tier.itemCount[1]);
+  const context = {
+    day,
+    lotNumber,
+    random,
+    tier,
+    usedTemplateIds: [],
+    usedCombinationKeys: [],
+    recentTemplateIds,
+    recentCombinationKeys
+  };
+  const items = [];
+
+  for (let index = 0; index < itemCount; index += 1) {
+    const isProtagonist = index === 0;
+    const template = selectComposableTemplate({
+      templates,
+      context,
+      isProtagonist
+    });
+    if (!template) break;
+    const item = createComposedItem(template, context, index, isProtagonist);
+    items.push(item);
+    context.usedTemplateIds.push(template.templateId);
+    context.usedCombinationKeys.push(item.composition.key);
+  }
+
+  return {
+    id: `generated_box_${day}_${lotNumber}_${Math.floor(
+      random() * 0xffffff
+    ).toString(36)}`,
+    tierId: tier.id,
+    generationSeed: `${day}:${lotNumber}:${tier.id}`,
+    destination: route,
+    appearance: appearance.label,
+    appearanceDescription: `${seal.description}，${appearance.description}。`,
+    naturalInfo: {
+      route,
+      sourceLabel: "机场统一清仓批次",
+      storageDays: randomInt(random, 18, 240),
+      size: size.label,
+      weightKg: Number(randomRange(random, 7.5, 31.5).toFixed(1)),
+      seal: seal.label,
+      sealDescription: seal.description,
+      appearance: appearance.label,
+      batchNumber: `AP-${String(day).padStart(2, "0")}-${randomInt(
+        random,
+        100,
+        999
+      )}`
+    },
+    startingPrice,
+    competitors: createAuctionCompetitors(random, startingPrice, tier),
+    items,
+    usedTemplateIds: context.usedTemplateIds,
+    usedCombinationKeys: context.usedCombinationKeys
+  };
+}
+
+function createAuctionCompetitors(random, startingPrice, tier) {
+  const competitors = [];
+  const pool = [...AUCTION_BOX_GENERATION.competitors];
+  while (competitors.length < 2 && pool.length) {
+    const index = Math.floor(random() * pool.length);
+    const [profile] = pool.splice(index, 1);
+    const budgetMultiplier = tier.id === "high" ? 1.8 : 1.55;
+    competitors.push({
+      ...profile,
+      budget: Math.round(
+        (startingPrice *
+          randomRange(random, budgetMultiplier, budgetMultiplier + 0.55)) /
+          10
+      ) * 10,
+      aggression: Math.max(
+        0.28,
+        Math.min(0.92, profile.aggression + randomRange(random, -0.08, 0.08))
+      )
+    });
+  }
+  return competitors;
+}
+
+function selectComposableTemplate({ templates, context, isProtagonist }) {
+  const used = new Set(context.usedTemplateIds);
+  const recent = new Set(context.recentTemplateIds);
+  const categoryWeight = context.tier.categoryWeights ?? {};
+  const candidates = (templates ?? []).filter(
+    (template) => !used.has(template.templateId)
+  );
+  const filtered = candidates.filter((template) => {
+    const category = categoryWeight[template.category] ?? 0;
+    if (category <= 0) return false;
+    if (!isProtagonist) return true;
+    return (
+      Number(template.baseValue) >= context.tier.valueRange[0] * 0.5 &&
+      Number(template.baseValue) <= context.tier.valueRange[1] * 1.25
+    );
+  });
+  const pool = filtered.length ? filtered : candidates;
+  return pickWeighted(randomForContext(context), pool, (template) => {
+    const category = categoryWeight[template.category] ?? 0.05;
+    const value = Number(template.baseValue) || 1;
+    const midpoint =
+      (context.tier.valueRange[0] + context.tier.valueRange[1]) / 2;
+    const valueFit = 1 / (1 + Math.abs(value - midpoint) / Math.max(1, midpoint));
+    const recentPenalty = recent.has(template.templateId) ? 0.16 : 1;
+    const protagonistBonus = isProtagonist ? 1.25 : 0.82;
+    return category * valueFit * recentPenalty * protagonistBonus;
+  });
+}
+
+function randomForContext(context) {
+  return context.random ?? Math.random;
+}
+
+function createComposedItem(template, context, index, isProtagonist) {
+  const random = randomForContext(context);
+  const category = template.category ?? "common";
+  const condition = pickWeighted(
+    random,
+    ITEM_COMPOSITION_POOLS.conditions
+  );
+  const origin = pickWeighted(
+    random,
+    ITEM_COMPOSITION_POOLS.origins.filter((candidate) =>
+      candidate.categories.includes(category)
+    )
+  );
+  const label = pickWeighted(
+    random,
+    ITEM_COMPOSITION_POOLS.labels.filter((candidate) =>
+      candidate.categories.includes(category)
+    )
+  );
+  const appearance = pickWeighted(
+    random,
+    ITEM_COMPOSITION_POOLS.appearances.filter((candidate) =>
+      candidate.allowedConditions.includes(condition.id)
+    )
+  );
+  const valueMultiplier =
+    condition.valueMultiplier *
+    origin.valueMultiplier *
+    label.valueMultiplier *
+    appearance.valueMultiplier *
+    (isProtagonist ? 1.04 : 0.88);
+  const rawValue = Math.max(
+    10,
+    (Number(template.baseValue) || 60) * valueMultiplier
+  );
+  const baseValue = roundToTen(
+    Math.min(
+      rawValue,
+      context.tier.valueRange[1] * (isProtagonist ? 1.25 : 0.9)
+    )
+  );
+  const onsitePrice = roundToTen(
+    baseValue * randomRange(random, 0.68, 0.88)
+  );
+  const keywords = uniqueList([
+    ...(template.keywords ?? []),
+    origin.keyword,
+    label.keyword,
+    appearance.keyword
+  ]);
+  const composition = {
+    key: `${template.templateId}|${condition.id}|${origin.id}|${label.id}|${appearance.id}`,
+    category,
+    templateId: template.templateId,
+    conditionId: condition.id,
+    originId: origin.id,
+    labelId: label.id,
+    appearanceId: appearance.id,
+    tierId: context.tier.id,
+    protagonist: isProtagonist === true
+  };
+  const description = [
+    template.description,
+    `当前状态为${condition.label}，${condition.description}。`,
+    `外观表现为${appearance.label}，${appearance.description}。`,
+    `来源记录显示为${origin.label}，标签特征为${label.label}。`
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return initializeItem(
+    {
+      ...template,
+      id: `item_${context.day}_${context.lotNumber}_${index}_${Math.floor(
+        random() * 0xffffff
+      ).toString(36)}`,
+      templateId: template.templateId,
+      name: template.name,
+      category,
+      composition,
+      conditionId: condition.id,
+      conditionLabel: condition.label,
+      conditionDescription: condition.description,
+      originId: origin.id,
+      originLabel: origin.label,
+      labelId: label.id,
+      labelLabel: label.label,
+      appearanceId: appearance.id,
+      appearanceLabel: appearance.label,
+      appearanceDescription: appearance.description,
+      baseValue,
+      onsitePrice,
+      source: origin.label,
+      keywords,
+      summary: template.description,
+      description,
+      imageKey: template.imageKey ?? template.templateId,
+      status: "unviewed",
+      searched: false,
+      unlockedTags: []
+    },
+    { random, composition }
+  );
+}
+
+function createStoryAuctionBox(day) {
+  const storyBox = STAGE_TWO_DATA.mainStory.specialBox;
+  return {
+    ...storyBox,
+    tierId: "story",
+    generationSeed: `story:${day}`,
+    naturalInfo: {
+      route: "城南旧宅 · 私人寄售",
+      sourceLabel: "私人收藏",
+      storageDays: 0,
+      size: "私人收藏旧物箱",
+      weightKg: 12.4,
+      seal: "私人封条",
+      sealDescription: "封条完整，带有周棠收藏的私人印记",
+      appearance: storyBox.appearance,
+      batchNumber: "PRIVATE-ZT"
+    },
+    items: storyBox.items.map((item) => initializeItem(item))
+  };
+}
+
+function normalizeAuctionNaturalInfo(template, day) {
+  if (template?.naturalInfo && typeof template.naturalInfo === "object") {
+    return { ...template.naturalInfo };
+  }
+  const route = template?.destination ?? "来源不明";
+  return {
+    route,
+    sourceLabel: template?.storyBox ? "私人寄售" : "机场统一清仓批次",
+    storageDays: template?.storyBox ? 0 : 24 + (hashString(`${route}:${day}`) % 180),
+    size: template?.storyBox ? "私人收藏旧物箱" : "中号硬壳箱",
+    weightKg: template?.storyBox ? 12.4 : 10 + (hashString(route) % 160) / 10,
+    seal: template?.storyBox ? "私人封条" : "封条磨损",
+    sealDescription: template?.storyBox
+      ? "封条完整，带有私人收藏印记"
+      : "封条边缘有磨损，暂时没有发现重新贴过",
+    appearance: template?.appearance ?? "磨损",
+    batchNumber: template?.storyBox
+      ? "PRIVATE-ZT"
+      : `AP-${String(day).padStart(2, "0")}-000`
+  };
+}
+
+function prepareAuctionDay(targetState, day) {
+  const runSeed =
+    targetState.itemGeneration?.runSeed ?? createRandomSeed();
+  const request = {
+    day,
+    runSeed,
+    story: targetState.mainStory ?? null,
+    recentTemplateIds: targetState.itemGeneration?.recentTemplateIds ?? [],
+    recentCombinationKeys:
+      targetState.itemGeneration?.recentCombinationKeys ?? []
+  };
+  const dailyAuction = createDailyAuctionQueue(request);
+  targetState.itemGeneration = {
+    runSeed,
+    recentTemplateIds: dailyAuction.recentTemplateIds,
+    recentCombinationKeys: dailyAuction.recentCombinationKeys,
+    currentBoxProtagonist:
+      dailyAuction.queue[0]?.items?.[0]?.templateId ?? null
+  };
+  targetState.auctionQueue = dailyAuction.queue;
+  targetState.auctionQueueDay = day;
+  targetState.auction = createAuctionState(
+    dailyAuction.queue[0],
+    day,
+    1,
+    dailyAuction.queue.length
+  );
+  return targetState.auction;
+}
+
+function ensureAuctionQueue(targetState, day) {
+  if (
+    targetState.auctionQueueDay === day &&
+    Array.isArray(targetState.auctionQueue) &&
+    targetState.auctionQueue.length > 0 &&
+    targetState.auction?.day === day
+  ) {
+    return;
+  }
+  prepareAuctionDay(targetState, day);
 }
 
 function pickBuyerProfile(listing) {
@@ -3818,6 +4571,292 @@ function findMutableOwnedItem(itemId) {
   return null;
 }
 
+function inspectionQualityLabel(quality) {
+  return {
+    perfect: "完美",
+    qualified: "合格",
+    rough: "粗糙"
+  }[quality] ?? "合格";
+}
+
+function getInspectionOperationFamily(item) {
+  const key = `${item?.templateId ?? ""} ${item?.name ?? ""}`.toLowerCase();
+  if (/相机|收音机|拍立得|手机|补光灯|台灯|camera|radio|phone|lamp/.test(key)) {
+    return "electronics";
+  }
+  if (
+    /书|账本|文件|合同|情书|收据|票据|车票|票根|明信片|照片|便条|证件|遗嘱|画|paper|book|note/.test(
+      key
+    )
+  ) {
+    return "document";
+  }
+  if (/衣|衫|裙|布|织物|挂绳|背包|手提包|皮包|袋|textile|bag/.test(key)) {
+    return "clothing";
+  }
+  if (
+    /银|金|表|腕表|酒壶|罗盘|铜|工具|剪|听诊器|茶具|watch|flask|compass|tool/.test(
+      key
+    )
+  ) {
+    return "metal";
+  }
+  if (item?.category === "luxury") return "luxury";
+  return "generic";
+}
+
+function getAllInspectionOperationProfiles(item) {
+  const family = getInspectionOperationFamily(item);
+  const profiles = {
+    clothing: [
+      {
+        id: "clean-fabric",
+        name: "清洁织物",
+        type: "clean",
+        hotspot: "clean",
+        factKinds: ["feature", "source"],
+        instruction: "拖动清洁布覆盖污渍区域。"
+      },
+      {
+        id: "repair-seams",
+        name: "修补缝线",
+        type: "seam",
+        hotspot: "detail",
+        factKinds: ["condition", "feature"],
+        instruction: "按照从内到外的顺序点击接缝。"
+      },
+      {
+        id: "organize-tag",
+        name: "整理标签",
+        type: "choose",
+        hotspot: "label",
+        factKinds: ["source", "feature"],
+        instruction: "选择与原物年代相符的标签处理方式。"
+      }
+    ],
+    metal: [
+      {
+        id: "wipe-surface",
+        name: "擦拭表面",
+        type: "clean",
+        hotspot: "clean",
+        factKinds: ["feature", "code"],
+        instruction: "沿纹理拖动擦拭金属表面。"
+      },
+      {
+        id: "disassemble-case",
+        name: "拆解外壳",
+        type: "seam",
+        hotspot: "detail",
+        factKinds: ["record", "feature"],
+        instruction: "按照正确顺序点击螺丝和接缝。"
+      },
+      {
+        id: "apply-oil",
+        name: "上油保养",
+        type: "choose",
+        hotspot: "label",
+        factKinds: ["condition", "feature"],
+        instruction: "选择正确的保养用量。"
+      },
+      {
+        id: "reassemble-parts",
+        name: "重新组装",
+        type: "parts",
+        hotspot: "detail",
+        factKinds: ["record", "source"],
+        instruction: "把零件拖回正确位置。"
+      }
+    ],
+    electronics: [
+      {
+        id: "open-shell",
+        name: "打开外壳",
+        type: "seam",
+        hotspot: "detail",
+        factKinds: ["record", "feature"],
+        instruction: "依次点击卡扣和外壳接缝。"
+      },
+      {
+        id: "inspect-parts",
+        name: "检查零件",
+        type: "compare",
+        hotspot: "label",
+        factKinds: ["record", "code"],
+        instruction: "对照标签和档案，找出不一致的零件记录。"
+      },
+      {
+        id: "repair-circuit",
+        name: "修复电路",
+        type: "parts",
+        hotspot: "detail",
+        factKinds: ["condition", "source"],
+        instruction: "把线路模块拖回正确接口。"
+      }
+    ],
+    document: [
+      {
+        id: "clean-paper",
+        name: "清洁纸面",
+        type: "clean",
+        hotspot: "clean",
+        factKinds: ["feature", "code"],
+        instruction: "轻拖清洁工具，避免破坏纸张。"
+      },
+      {
+        id: "check-label",
+        name: "标签检查",
+        type: "compare",
+        hotspot: "label",
+        factKinds: ["source", "name"],
+        instruction: "对照标签和档案，找出不一致的信息。"
+      },
+      {
+        id: "extract-detail",
+        name: "提取细节",
+        type: "choose",
+        hotspot: "detail",
+        factKinds: ["record", "owner", "urgency"],
+        instruction: "选择需要重点提取的细节。"
+      }
+    ],
+    luxury: [
+      {
+        id: "check-code",
+        name: "核对编号",
+        type: "compare",
+        hotspot: "label",
+        factKinds: ["code", "record"],
+        instruction: "对照标签和档案，找出错误编号。"
+      },
+      {
+        id: "maintain-item",
+        name: "保养物品",
+        type: "clean",
+        hotspot: "clean",
+        factKinds: ["condition", "feature"],
+        instruction: "拖动保养工具，避免过度摩擦。"
+      },
+      {
+        id: "repair-package",
+        name: "修复包装",
+        type: "parts",
+        hotspot: "detail",
+        factKinds: ["packaging", "source"],
+        instruction: "把包装零件拖回正确位置。"
+      }
+    ],
+    generic: [
+      {
+        id: "clean-item",
+        name: "清洁物品",
+        type: "clean",
+        hotspot: "clean",
+        factKinds: ["feature", "code"],
+        instruction: "拖动清洁工具覆盖污渍。"
+      },
+      {
+        id: "check-detail",
+        name: "细节检查",
+        type: "compare",
+        hotspot: "label",
+        factKinds: ["record", "owner"],
+        instruction: "对照标签和档案，找出不一致的信息。"
+      },
+      {
+        id: "repair-item",
+        name: "简单修复",
+        type: "parts",
+        hotspot: "detail",
+        factKinds: ["condition", "feature"],
+        instruction: "把零件拖回正确位置。"
+      }
+    ]
+  };
+  const toolMap = {
+    clean: ["cloth", "brush", "polish"],
+    seam: ["screwdriver", "tweezers"],
+    parts: ["tweezers"],
+    compare: ["magnifier"],
+    choose: ["label", "oil", "magnifier"]
+  };
+  return (profiles[family] ?? profiles.generic).map((operation) => ({
+    ...operation,
+    toolIds: operation.toolIds ?? toolMap[operation.type] ?? ["cloth"]
+  }));
+}
+
+function getInspectionOperationProfiles(item) {
+  const allOperations = getAllInspectionOperationProfiles(item);
+  const existingIds = Array.isArray(item?.inspection?.requiredOperationIds)
+    ? item.inspection.requiredOperationIds
+    : [];
+  if (existingIds.length >= 2 && existingIds.length <= 3) {
+    const selected = existingIds
+      .map((id) => allOperations.find((operation) => operation.id === id))
+      .filter(Boolean);
+    if (selected.length === existingIds.length) return selected;
+  }
+
+  const random = createSeededRandom(
+    `${item?.id ?? item?.templateId ?? item?.name}:inspection-operations`
+  );
+  const targetCount = random() < 0.58 ? 2 : 3;
+  const conditionId = item?.conditionId ?? "";
+  const appearanceId = item?.appearanceId ?? "";
+  const labelId = item?.labelId ?? "";
+  const weighted = allOperations.map((operation) => {
+    let weight = 10;
+    if (
+      operation.type === "clean" &&
+      ["damp", "rusted", "long_stored", "broken"].includes(conditionId)
+    ) {
+      weight += 8;
+    }
+    if (
+      ["broken", "missing_part", "cracked", "lining_torn"].includes(
+        appearanceId
+      )
+    ) {
+      if (["seam", "parts"].includes(operation.type)) weight += 12;
+    }
+    if (
+      operation.type === "compare" &&
+      labelId &&
+      !["missing_label", "damaged_label"].includes(labelId)
+    ) {
+      weight += 7;
+    }
+    if (!item?.composition && operation.type === "clean") weight += 2;
+    return { operation, weight };
+  });
+  const selected = [];
+  while (selected.length < Math.min(targetCount, weighted.length)) {
+    const pool = weighted.filter(
+      (entry) =>
+        !selected.some(
+          (operation) => operation.id === entry.operation.id
+        )
+    );
+    const totalWeight = pool.reduce((sum, entry) => sum + entry.weight, 0);
+    let roll = random() * totalWeight;
+    let picked = pool[pool.length - 1];
+    for (const entry of pool) {
+      roll -= entry.weight;
+      if (roll <= 0) {
+        picked = entry;
+        break;
+      }
+    }
+    if (picked) selected.push(picked.operation);
+  }
+  item.inspection ??= {};
+  item.inspection.requiredOperationIds = selected.map(
+    (operation) => operation.id
+  );
+  return selected;
+}
+
 function revealNextInspectionFact(item, preferredKinds = []) {
   const facts = Array.isArray(item?.facts) ? item.facts : [];
   const preferred = preferredKinds
@@ -3977,6 +5016,13 @@ function getItemProvenance(item) {
   if (item.category === "luxury") return "私人来源，缺少完整购买记录";
   if (item.category === "junk") return "来源不明的生活杂物";
   return "无人认领行李中的普通物品";
+}
+
+function getItemSummary(item) {
+  const text = String(item?.summary || item?.description || "").trim();
+  if (!text) return "";
+  const firstSentence = text.match(/^.*?[。！？!?](?:\s|$)/)?.[0]?.trim();
+  return (firstSentence || text).slice(0, 80);
 }
 
 function buildSearchEvidence(item, keyword, fact) {

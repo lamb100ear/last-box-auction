@@ -12,7 +12,8 @@ const contentTypes = {
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".wav": "audio/wav"
 };
 
 const server = http.createServer(async (request, response) => {
@@ -28,11 +29,15 @@ const server = http.createServer(async (request, response) => {
 
   try {
     const data = await readFile(filePath);
-    response.writeHead(200, {
-      "Content-Type":
-        contentTypes[path.extname(filePath).toLowerCase()] ||
-        "application/octet-stream"
-    });
+    const extension = path.extname(filePath).toLowerCase();
+    const headers = {
+      "Content-Type": contentTypes[extension] || "application/octet-stream"
+    };
+    // 本地开发时脚本和样式每次重新取，避免改了代码浏览器还在跑旧模块。
+    if ([".html", ".js", ".css"].includes(extension)) {
+      headers["Cache-Control"] = "no-store";
+    }
+    response.writeHead(200, headers);
     response.end(data);
   } catch {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

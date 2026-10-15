@@ -1,0 +1,2605 @@
+/* 《再拍最后一箱！》2.0 第一部分样式。
+   逻辑分辨率 1200 x 675，界面元素按 PSD 坐标除以 2 定位。 */
+
+* {
+  box-sizing: border-box;
+}
+
+/* 像素字体：Fusion Pixel 12px（OFL 许可，见 美术/2.0/fonts/OFL.txt）。 */
+@font-face {
+  font-family: "FusionPixel";
+  src: url("../美术/2.0/fonts/fusion-pixel-12px-zh_hans.woff2") format("woff2");
+  font-display: block;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0f14;
+  font-family: "FusionPixel", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  -webkit-font-smoothing: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #0b0f14;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+#canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1200px;
+  height: 675px;
+  overflow: hidden;
+  transform-origin: 0 0;
+  font-family: "FusionPixel", "Noto Sans SC", "Microsoft YaHei", monospace;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+/* 禁止浏览器把界面图片当成可拖动对象，避免拖动时出现蓝色选中和拖影。 */
+#canvas img,
+#canvas .layer {
+  -webkit-user-drag: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.scene {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+.scene.is-active {
+  display: block;
+}
+
+.layer {
+  position: absolute;
+  overflow: hidden;
+}
+
+/* 纯文字层只负责显示文字，不拦截鼠标。 */
+.layer.is-artless {
+  pointer-events: none;
+}
+
+.layer > img.art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.layer > .value,
+.layer > .label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: pre-line;
+  line-height: 1.25;
+  color: #f4efe6;
+  font-size: 18px;
+  pointer-events: none;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+.layer > .panel {
+  position: absolute;
+  inset: 0;
+  padding: 10px 12px;
+  color: #f4efe6;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.layer > .panel button {
+  pointer-events: auto;
+}
+
+.layer.is-hidden {
+  display: none !important;
+}
+
+.layer.is-clickable:hover {
+  outline: 2px solid #e0a93c;
+  outline-offset: -2px;
+  cursor: pointer;
+}
+
+.layer.is-disabled {
+  filter: grayscale(0.6) brightness(0.72);
+  cursor: not-allowed;
+}
+
+.layer.is-disabled:hover {
+  outline: none;
+}
+
+/* 橱窗是场景陈设，不需要悬停描边。 */
+.layer.is-clickable[data-name="橱窗"]:hover {
+  outline: none;
+  cursor: default;
+}
+
+/* 玩家选项是木牌：平时不描边，鼠标悬停时才亮出黄框。 */
+.layer[data-role="reply"]:hover {
+  outline: 3px solid #e0a93c;
+  outline-offset: -3px;
+  cursor: pointer;
+}
+
+/* 状态栏与日历 */
+.layer[data-name="余额"] > .value {
+  font-size: 24px;
+  color: #ffd98a;
+  justify-content: flex-end;
+  padding-right: 16px;
+}
+
+.layer[data-name="麻烦值"] > .value,
+.layer[data-name="信誉值"] > .value {
+  font-size: 18px;
+  justify-content: flex-end;
+  padding-right: 16px;
+}
+
+.layer[data-name="日历"] > .value {
+  font-size: 18px;
+}
+
+/* 日历里的两行文字，位置来自 PSD 的文字图层区域。 */
+.layer[data-name="日历_天数"] > .value,
+.layer[data-name="日历_趋势"] > .value {
+  font-size: 12px;
+  color: #4a2c17;
+  text-shadow: none;
+  white-space: nowrap;
+}
+
+.layer[data-name="日历_趋势"] > .value {
+  font-size: 12px;
+}
+
+/* 出价信息栏三行：买家一、买家二、玩家。 */
+.layer[data-name="买家一出价"] > .value,
+.layer[data-name="买家二出价"] > .value,
+.layer[data-name="玩家出价"] > .value {
+  font-size: 15px;
+  line-height: 1.35;
+  color: #2b1c10;
+  text-shadow: none;
+}
+
+.layer[data-name="当前箱子"] > .value {
+  font-size: 15px;
+  align-items: flex-end;
+  padding-bottom: 8px;
+}
+
+/* 箱子名签放到箱子上方，不压在箱体上。 */
+.layer[data-name="当前箱子"] {
+  overflow: visible;
+}
+
+.layer[data-name="当前箱子"] > .value {
+  inset: auto -40px auto -40px;
+  bottom: 100%;
+  top: auto;
+  padding: 0 0 6px;
+  font-size: 14px;
+  color: #ffd98a;
+}
+
+/* ---------- 店铺基础界面（PSD：店铺界面(2)） ---------- */
+
+/* 桌面只是拖放判定区，不拦鼠标，避免挡住货架箱子格的点击。 */
+.layer[data-name="桌面"] {
+  pointer-events: none;
+}
+
+/* 货架计数写在货架顶板上。 */
+.layer[data-name="货架_计数"] > .value {
+  font-size: 12px;
+  color: #ffe1a8;
+  text-shadow: 0 2px 0 rgba(30, 16, 6, 0.7);
+}
+
+/* 橱窗：物品按展示窗的第一个灯位摆放，文字写在展示窗内部。 */
+.layer[data-name="橱窗"] > .panel {
+  padding: 0;
+  color: #e8f3f7;
+}
+
+.layer[data-name="橱窗"] .panel h4 {
+  position: absolute;
+  left: 60px;
+  /* 标题挂在橱窗外框上方，不压在灯位上。 */
+  top: 20px;
+  margin: 0;
+  font-size: 13px;
+  color: #ffe1a8;
+}
+
+.layer[data-name="橱窗"] .win-empty {
+  position: absolute;
+  left: 58px;
+  top: 98px;
+}
+
+.win-slot {
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.win-slot .window-art {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  margin: 0;
+}
+
+/* 物品格直接画在货架的格口里，去掉原来的卡片底和边框。 */
+.layer[data-name="货架上层物品格"] > .panel,
+.layer[data-name="货架下层箱子区"] > .panel {
+  padding: 0;
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 0;
+  height: 100%;
+  margin: 0;
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  height: auto;
+  padding: 1px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  color: #f4efe6;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-shadow: 0 2px 0 rgba(10, 14, 20, 0.65);
+}
+
+.slot.filled {
+  cursor: pointer;
+  background: rgba(255, 236, 200, 0.1);
+}
+
+.slot.filled:hover {
+  background: rgba(255, 214, 138, 0.26);
+}
+
+.slot.danger {
+  background: rgba(122, 46, 46, 0.42);
+}
+
+.slot.clue {
+  background: rgba(28, 84, 96, 0.45);
+}
+
+.slot.empty {
+  background: transparent;
+}
+
+.slot-name {
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.slot-flag {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+/* 箱子格用 PSD 的木箱图当底。 */
+.box-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 0;
+  height: 100%;
+  margin: 0;
+}
+
+.box-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #2b1a0c;
+  text-align: center;
+  cursor: pointer;
+  background: url("../美术/2.0/shop/箱位一.png") no-repeat center / contain;
+  border: none;
+  border-radius: 0;
+}
+
+.box-card:hover {
+  filter: brightness(1.12);
+}
+
+.box-size {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.box-info {
+  font-size: 10px;
+}
+
+/* 箱子信息面板是浅木色底板，文字改成深色才看得清。 */
+.layer[data-name="箱子信息面板"] .panel,
+.layer[data-name="箱子信息面板"] .panel h4,
+.layer[data-name="箱子信息面板"] .panel ul.facts li,
+.layer[data-name="箱子信息面板"] .panel p {
+  color: #33210f;
+}
+
+.layer[data-name="箱子信息面板"] .panel h4 {
+  color: #241606;
+}
+
+.layer[data-name="箱子信息面板"] .panel .meta {
+  color: #6a4d2a;
+}
+
+.layer[data-name="箱子信息面板"] .panel .pos {
+  color: #1d5c2f;
+}
+
+.layer[data-name="箱子信息面板"] .panel .risk {
+  color: #8c2b18;
+}
+
+.layer[data-name="箱子信息面板"] .panel .bidline {
+  border-top-color: rgba(60, 38, 16, 0.35);
+}
+
+.layer[data-name="箱子信息面板"] .panel .bidline b {
+  color: #7a3208;
+}
+
+/* 现场报价板同样是浅色底板，文字压深并避开底部的两个按钮。 */
+.layer[data-name="预览面板"] > .panel {
+  padding: 26px 28px 96px;
+}
+
+.layer[data-name="预览面板"] .panel,
+.layer[data-name="预览面板"] .panel p,
+.layer[data-name="预览面板"] .panel li,
+.layer[data-name="预览面板"] .panel h4 {
+  color: #33210f;
+}
+
+.layer[data-name="预览面板"] .panel h4 {
+  color: #241606;
+  font-size: 15px;
+}
+
+.layer[data-name="预览面板"] .panel .meta {
+  color: #6a4d2a;
+}
+
+.layer[data-name="预览面板"] .panel .total {
+  color: #7a3208;
+  font-weight: 700;
+}
+
+.layer[data-name="预览面板"] .offers li.offer {
+  border-bottom-color: rgba(60, 38, 16, 0.28);
+}
+
+.layer[data-name="预览面板"] .offers li.refused {
+  color: #8c2b18;
+}
+
+.layer[data-name="加价"] > .label,
+.layer[data-name="放弃"] > .label {
+  font-size: 22px;
+}
+
+.layer[data-name="小黑"] > .art,
+.layer[data-name="成交印章"] > .art,
+.layer[data-name="今日结束牌"] > .art {
+  object-fit: contain;
+}
+
+.layer[data-name="成交印章"] > .label {
+  font-size: 34px;
+  color: #2a1a06;
+}
+
+.layer[data-name="今日结束牌"] > .label {
+  font-size: 20px;
+}
+
+/* 信息板 */
+.panel h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #ffe1a8;
+}
+
+.panel .grid {
+  display: flex;
+  gap: 10px;
+}
+
+.panel .col {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel ul.facts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.panel p {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.panel .meta {
+  color: #a9bfd2;
+}
+
+.panel .pos {
+  color: #8fe0a8;
+}
+
+.panel .risk {
+  color: #f09a8a;
+}
+
+.panel .bidline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 2px solid rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+}
+
+.panel .bidline b {
+  color: #ffd98a;
+}
+
+.chip {
+  display: inline-block;
+  margin: 2px 6px 2px 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #dfe9f2;
+  background: rgba(0, 0, 0, 0.28);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+
+.chip.lead {
+  color: #241a08;
+  background: #e0a93c;
+  border-color: #ffd98a;
+}
+
+/* 黑匣广告海报 */
+.loan h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: #ffd98a;
+}
+
+.loan p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #cfe0ee;
+}
+
+.loan .actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.btn {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #ffe9c0;
+  background: #7a4f22;
+  border: 2px solid #b8884a;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #8d5d2a;
+}
+
+.btn.primary {
+  font-weight: 700;
+  color: #3a2410;
+  background: #e0a93c;
+  border-color: #ffd98a;
+}
+
+.btn.primary:hover {
+  background: #eebc55;
+}
+
+/* 处置界面路线卡片 */
+.layer[data-name="原封转卖"],
+.layer[data-name="现场开箱"],
+.layer[data-name="带回家"],
+.layer[data-name="预览面板"],
+.layer[data-name="全部卖给现场"],
+.layer[data-name="全部带回家"],
+.layer[data-name="货架上层物品格"],
+.layer[data-name="买家对话气泡"],
+.layer[data-name="玩家选项一"],
+.layer[data-name="玩家选项二"],
+.layer[data-name="玩家选项三"] {
+  color: #16232e;
+}
+
+/* 浅色底板上的文字直接压深，并去掉深色描边阴影。 */
+.layer[data-name="原封转卖"] > .label,
+.layer[data-name="现场开箱"] > .label,
+.layer[data-name="带回家"] > .label,
+.layer[data-name="预览面板"] > .label,
+.layer[data-name="全部卖给现场"] > .label,
+.layer[data-name="全部带回家"] > .label,
+.layer[data-name="货架上层物品格"] > .label,
+.layer[data-name="买家对话气泡"] > .label {
+  color: #16232e;
+  text-shadow: none;
+}
+
+.layer[data-name="货架上层物品格"] .panel h4 {
+  color: #5a3c1c;
+}
+
+/* 拍卖锤的名字写在锤子下方，不压在锤体上。 */
+.layer[data-name="拍卖锤"] {
+  overflow: visible;
+}
+
+.layer[data-name="拍卖锤"] > .label {
+  inset: auto 0 -8px 0;
+  height: 32px;
+  font-size: 18px;
+  color: #ffe9c0;
+  text-shadow: 0 2px 0 rgba(30, 16, 6, 0.7);
+}
+
+/* 营业牌的字居中在木牌上，不贴着挂链。 */
+.layer[data-name="营业牌"] > .label {
+  inset: 28px 0 0 0;
+  font-size: 18px;
+}
+
+/* 买家对话气泡：和引导气泡同一套像素木框。 */
+.layer[data-name="买家对话气泡"] {
+  border: 5px solid transparent;
+  border-image-source: url("../美术/2.0/mascot/气泡.png");
+  border-image-slice: 5 fill;
+  border-image-width: 5px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+.layer[data-name="买家对话气泡"] > .panel {
+  color: #f1e6c8;
+  padding: 12px 16px;
+}
+
+/* 线索物品的特殊会话可能一次说两句。 */
+.layer[data-name="买家对话气泡"] .speech {
+  white-space: pre-line;
+}
+
+/* 玩家三个选项用通用UI按键做九宫格底，选项本身可点。 */
+.layer.is-artless[data-role="reply"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.layer[data-role="reply"] {
+  border: 8px solid transparent;
+  border-image-source: url("../美术/2.0/common/通用UI按键.png");
+  border-image-slice: 22 fill;
+  border-image-width: 8px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+.layer[data-role="reply"] > .label {
+  color: #ffe9c0;
+  font-size: 12px;
+  line-height: 1.25;
+  padding: 0 6px;
+  text-shadow: 0 2px 0 rgba(40, 20, 6, 0.6);
+}
+
+.layer[data-role="reply"]:hover {
+  filter: brightness(1.15);
+}
+
+.layer[data-name="货架上层物品格"] > .panel {
+  color: #3a2a16;
+}
+
+.layer[data-name="货架上层物品格"] .panel .meta {
+  color: #5a4326;
+}
+
+.quote-warning {
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #2a1a06;
+  background: #ffe6a8;
+  border-left: 4px solid #d08a1c;
+  border-radius: 4px;
+}
+
+.quote-warning b {
+  color: #8a3a06;
+}
+
+.layer[data-name="原封转卖"] .panel h4,
+.layer[data-name="现场开箱"] .panel h4,
+.layer[data-name="带回家"] .panel h4,
+.layer[data-name="预览面板"] .panel h4 {
+  color: #0f3a5c;
+}
+
+.layer[data-name="预览面板"] .panel .meta,
+.layer[data-name="带回家"] .panel .meta,
+.layer[data-name="货架上层物品格"] .panel .meta {
+  color: #3d5871;
+}
+
+.layer[data-name="原封转卖"] > .panel,
+.layer[data-name="现场开箱"] > .panel,
+.layer[data-name="带回家"] > .panel {
+  /* 卡片左边是道具图标格，文字区域从图标右侧开始。 */
+  padding: 10px 5% 10px 33%;
+}
+
+.layer[data-name="全部卖给现场"] > .label,
+.layer[data-name="全部带回家"] > .label {
+  font-size: 16px;
+  color: #ffe9c0;
+  text-shadow: 0 2px 0 rgba(40, 20, 6, 0.6);
+}
+
+/* 处置界面的箱子名签放到箱子上方，和拍卖界面一致。 */
+.layer[data-name="箱子"] {
+  overflow: visible;
+}
+
+/* 现场开箱：这次开出的物品摊在箱子里。 */
+.layer[data-name="箱子"] > .panel {
+  padding: 0;
+}
+
+.box-open-row {
+  position: absolute;
+  left: 30px;
+  right: 32px;
+  top: 24px;
+  height: 234px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.box-open-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 82px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #e8dcc0;
+  text-align: center;
+}
+
+.box-open-item.refused {
+  color: #f0a08c;
+}
+
+.box-open-art {
+  display: block;
+  width: 70px;
+  height: 70px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.box-open-price {
+  color: #ffd98a;
+  font-weight: 700;
+}
+
+.box-open-item.refused .box-open-price {
+  color: #f0a08c;
+}
+
+.layer[data-name="箱子"] > .value {
+  inset: auto -40px auto -40px;
+  bottom: 100%;
+  top: auto;
+  padding: 0 0 6px;
+  font-size: 16px;
+  color: #ffd98a;
+}
+
+/* 货架容量不足提示用通用按键美术，文字用浅色。 */
+.layer[data-name="货架容量不足"] > .label {
+  font-size: 18px;
+  color: #ffe9c0;
+  text-shadow: 0 2px 0 rgba(40, 20, 6, 0.6);
+}
+
+.card strong {
+  display: block;
+  font-size: 16px;
+  color: #241606;
+}
+
+.card p {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #33210f;
+}
+
+.card .quote {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7a3208;
+}
+
+.card .meta {
+  color: #6a4d2a;
+}
+
+/* 现场开箱预览 */
+.offers {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.offers li.offer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 2px solid rgba(15, 40, 60, 0.14);
+}
+
+.offers li.refused {
+  color: #7a2e2e;
+}
+
+.offers .price {
+  font-weight: 700;
+  color: #0f3a5c;
+}
+
+.total {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f3a5c;
+}
+
+/* 提示与遮罩 */
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  z-index: 80;
+  padding: 10px 18px;
+  font-size: 14px;
+  color: #f6ebd8;
+  background: rgba(12, 18, 24, 0.94);
+  border: 2px solid #e0a93c;
+  border-radius: 6px;
+  transform: translateX(-50%);
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 10, 14, 0.84);
+}
+
+.overlay[hidden] {
+  display: none;
+}
+
+.menu,
+.settle {
+  width: 430px;
+  padding: 26px 28px;
+  color: #eaf1f6;
+  text-align: center;
+  background: #141c26;
+  border: 3px solid #2e4358;
+  border-radius: 8px;
+}
+
+.menu h1,
+.settle h2 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+.menu .sub {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: #8fa6bb;
+}
+
+.menu .hint {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: #7d93a8;
+}
+
+.settle ul.facts {
+  margin: 0 0 18px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.9;
+  list-style: none;
+  text-align: left;
+}
+
+.menu-btn {
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 12px;
+  font-size: 16px;
+  color: #ffe9c0;
+  background: #7a4f22;
+  border: 2px solid #b8884a;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.menu-btn:hover:not(:disabled) {
+  background: #8d5d2a;
+}
+
+.menu-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-btn.danger {
+  background: #7a2e2e;
+  border-color: #b06060;
+}
+
+/* ---------- 第二部分：店铺 ---------- */
+
+.panel .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.panel .actions .btn {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hint {
+  margin: 6px 0;
+  font-size: 12px;
+  color: #ffd98a;
+}
+
+/* 货架格子的样式见上方的店铺基础界面区块。 */
+
+/* 箱子格的样式见上方的店铺基础界面区块。 */
+
+.empty {
+  font-size: 12px;
+  color: #cbb898;
+}
+
+.trust {
+  font-size: 14px;
+  color: #ffd98a;
+}
+
+.speech {
+  margin: 4px 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.layer[data-role="reply"] > .label {
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+/* 检视台 */
+.layer[data-name="检视台弹层"] > .panel,
+.layer[data-name="物品视图"] > .panel,
+.layer[data-name="操作区"] > .panel,
+.layer[data-name="工具带"] > .panel,
+.layer[data-name="出售页面"] > .panel,
+.layer[data-name="商城页面"] > .panel,
+.layer[data-name="万物通页面"] > .panel,
+.layer[data-name="记事本_左页"] > .panel,
+.layer[data-name="记事本_右页"] > .panel,
+.layer[data-name="日历展开"] > .panel,
+.layer[data-name="物品详情窗口"] > .panel {
+  pointer-events: auto;
+  overflow-y: auto;
+}
+
+.item-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  margin: 10px 0;
+  background: rgba(0, 0, 0, 0.3);
+  border: 3px solid #4a5d6e;
+  border-radius: 8px;
+}
+
+.item-mark {
+  font-size: 26px;
+  color: #ffd98a;
+}
+
+/* 物品工作台 */
+.item-stage {
+  position: absolute;
+  left: 50%;
+  top: 36px;
+  width: 290px;
+  height: 290px;
+  margin: 0 0 0 -145px;
+  overflow: hidden;
+  cursor: crosshair;
+  background: radial-gradient(
+    circle at 50% 42%,
+    rgba(72, 48, 24, 0.18),
+    rgba(26, 15, 6, 0.52)
+  );
+  border: 3px solid #8a5f2a;
+  border-radius: 8px;
+  touch-action: none;
+}
+
+.item-art {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 15px;
+  color: #ffe9c0;
+  background: none;
+}
+
+.item-art b {
+  font-size: 22px;
+  color: #ffd98a;
+}
+
+.dirt {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(92, 74, 48, 0.95), rgba(92, 74, 48, 0.55));
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.brush {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.lens {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  background: #1b2a38;
+  border: 3px solid #cfd8e2;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(15, 40, 60, 0.6), 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+
+.lens-inner {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 300px;
+  height: 300px;
+  transform-origin: 0 0;
+}
+
+.lens-inner .item-art {
+  position: absolute;
+  inset: 0;
+}
+
+.spot {
+  position: absolute;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: #241a08;
+  background: #ffd98a;
+  border-radius: 4px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.screw {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+  color: #eaf1f6;
+  cursor: pointer;
+  background: #6b7d8c;
+  border: 2px solid #9fb2c0;
+  border-radius: 50%;
+}
+
+.screw.out {
+  color: #7d93a8;
+  background: #2b3945;
+  border-color: #46596a;
+}
+
+.cover {
+  position: absolute;
+  left: 14%;
+  top: 32%;
+  width: 72%;
+  height: 32%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #dfe9f2;
+  cursor: pointer;
+  background: rgba(120, 140, 160, 0.35);
+  border: 2px solid #7d93a8;
+  border-radius: 6px;
+}
+
+.cover.open {
+  transform: translate(58%, -6%) rotate(8deg);
+  opacity: 0.55;
+}
+
+.ghost {
+  position: absolute;
+  width: 44%;
+  height: 16%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #9fb2c0;
+  border: 2px dashed #7d93a8;
+  border-radius: 6px;
+  transform: translate(-50%, -50%);
+}
+
+.part {
+  position: absolute;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #241a08;
+  background: #c8a24a;
+  border-radius: 4px;
+  transform: translate(-50%, -50%);
+}
+
+.part.mounted {
+  cursor: pointer;
+}
+
+.part.tray {
+  position: static;
+  transform: none;
+  cursor: grab;
+}
+
+.tray-slot {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 5%;
+  min-height: 22%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #9fb2c0;
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid #46596a;
+  border-radius: 6px;
+}
+
+.forge-target {
+  position: absolute;
+  left: 28%;
+  top: 24%;
+  width: 44%;
+  height: 42%;
+  border: 2px dashed #ffd98a;
+  border-radius: 8px;
+}
+
+.forge-piece {
+  position: absolute;
+  left: 50%;
+  top: 78%;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #241a08;
+  cursor: grab;
+  background: #e0a93c;
+  border-radius: 6px;
+  transform: translate(-50%, -50%);
+}
+
+.facts .good {
+  color: #8fe0a8;
+}
+
+.facts .bad {
+  color: #f09a8a;
+}
+
+/* ---------- 第三部分：小黑与记事本 ---------- */
+
+.mascot {
+  position: absolute;
+  left: 20px;
+  top: 500px;
+  z-index: 68;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: 660px;
+  pointer-events: none;
+}
+
+.mascot.flip {
+  flex-direction: row-reverse;
+}
+
+/* 单步聚焦的目标按键用琥珀色描边标出来。 */
+.layer.is-focus {
+  outline: 3px solid #e0a93c;
+  outline-offset: -3px;
+}
+
+/* 下层箱子区是四格网格，教学高亮改成框住箱子本身，别框住整块区域。 */
+.layer[data-name="货架下层箱子区"].is-focus {
+  outline: none;
+}
+
+.layer[data-name="货架下层箱子区"].is-focus > .panel > .box-row > .box-card {
+  outline: 3px solid #e0a93c;
+  outline-offset: -3px;
+}
+
+/* 「拖到桌面」引导：一条虚线轨迹加一个来回移动的手形提示。 */
+.drag-hint {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 69;
+  pointer-events: none;
+}
+
+.drag-hint[hidden] {
+  display: none;
+}
+
+.drag-trail {
+  position: absolute;
+  height: 4px;
+  transform-origin: 0 50%;
+  background-image: repeating-linear-gradient(
+    90deg,
+    #ffd98a 0 10px,
+    rgba(255, 217, 138, 0) 10px 20px
+  );
+}
+
+.drag-hand {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  background: #ffd98a;
+  border: 3px solid #8a5a12;
+  border-radius: 50%;
+  animation: dragMove 1.8s ease-in-out infinite;
+}
+
+.drag-hand::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  background: #8a5a12;
+  border-radius: 50%;
+}
+
+@keyframes dragMove {
+  0% {
+    transform: translate(var(--from-x), var(--from-y)) scale(0.9);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  60% {
+    transform: translate(var(--to-x), var(--to-y)) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--to-x), var(--to-y)) scale(1.05);
+    opacity: 0;
+  }
+}
+
+/* 买家对话和选项盖住其余界面，避免被小黑或场景信息压住。 */
+.layer[data-name="买家对话气泡"],
+.layer[data-role="reply"] {
+  z-index: 72;
+}
+
+/* 买家到店后摆在桌面上的待谈物品。 */
+.desk-item {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 190px;
+  padding: 10px 12px;
+  font-size: 12px;
+  /* 物品直接摆在木桌上，不铺卡片底色。 */
+  color: #f4efe6;
+  text-align: left;
+  cursor: pointer;
+  text-shadow: 0 2px 0 rgba(10, 14, 20, 0.65);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  transform: translate(-50%, -50%);
+}
+
+.desk-item b {
+  font-size: 14px;
+}
+
+.desk-item:hover {
+  filter: brightness(1.14);
+}
+
+.desk-item::after {
+  content: "点击查看物品详细信息";
+  position: absolute;
+  left: 50%;
+  top: -30px;
+  display: none;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #241a08;
+  background: #ffd98a;
+  border-radius: 4px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.desk-item:hover::after {
+  display: block;
+}
+
+/* 开场和纯说明步骤：整屏压暗，让小黑和对话框成为唯一焦点。 */
+.intro-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 66;
+  background: rgba(6, 10, 14, 0.68);
+}
+
+.intro-dim[hidden] {
+  display: none;
+}
+
+/* 教学期间的背景压暗，只做视觉处理，点击拦截交给代码判断。 */
+.layer.is-tutorial-dim {
+  filter: brightness(0.42);
+}
+
+/* 检视台里提示下一步该点的按键。 */
+.is-hint {
+  outline: 3px solid #ffd98a;
+  outline-offset: 2px;
+  animation: hintPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes hintPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 217, 138, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 217, 138, 0);
+  }
+}
+
+.drag-ghost {
+  position: absolute;
+  z-index: 64;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #16232e;
+  pointer-events: none;
+  background: #ffd98a;
+  border-radius: 6px;
+  transform: translate(-50%, -50%);
+}
+
+.sheet-close {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+  line-height: 1;
+  color: #ffe9c0;
+  cursor: pointer;
+  background: rgba(58, 36, 18, 0.92);
+  border: 2px solid #a9762f;
+  border-radius: 6px;
+}
+
+.sheet-close:hover {
+  color: #3a2410;
+  background: #e0a93c;
+  border-color: #ffd98a;
+}
+
+/* 万物通检索窗口，样式参考电脑搜索页 */
+.univ-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid rgba(120, 86, 40, 0.22);
+}
+
+.univ-bar b {
+  font-size: 18px;
+  color: #2f8a54;
+}
+
+.univ-bar span {
+  font-size: 12px;
+  color: #7c6a4e;
+}
+
+/* 搜索框的底图自带边框和放大镜，词条写在左边的输入区里。 */
+.layer[data-name="搜索_搜索框"] > .panel {
+  display: flex;
+  align-items: center;
+  padding: 8px 52px 8px 14px;
+}
+
+.univ-input {
+  font-size: 13px;
+  color: #5b6b79;
+}
+
+/* 检索结果排在搜索框下面，长结果在窗口里滚。 */
+.univ-results {
+  position: absolute;
+  left: 88px;
+  right: 88px;
+  top: 320px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.univ-results > .univ-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.univ-results > .meta {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.univ-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.univ-card {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: rgba(120, 86, 40, 0.1);
+  border-left: 4px solid #8a5a12;
+  border-radius: 6px;
+}
+
+.univ-type {
+  font-size: 12px;
+  color: #8a5a12;
+}
+
+.univ-card p {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #3d2a12;
+}
+
+.univ-keys {
+  font-size: 11px;
+  color: #7c6a4e;
+}
+
+.mascot[hidden] {
+  display: none;
+}
+
+.mascot-art {
+  width: 180px;
+  height: 151px;
+  image-rendering: pixelated;
+  flex: 0 0 auto;
+}
+
+.mascot-bubble {
+  position: relative;
+  max-width: 400px;
+  padding: 10px 12px;
+  color: #3a2410;
+  background: transparent;
+  border: 8px solid transparent;
+  border-radius: 0;
+  /* 暖色像素气泡：九宫格边框，米白底 + 木棕边框，2 倍像素放大。 */
+  border-image-source: url("../美术/2.0/mascot/气泡_暖.png");
+  border-image-slice: 4 fill;
+  border-image-width: 8px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+/* 气泡尾巴指向小黑；气泡翻到另一侧时换成右侧尾巴。 */
+.mascot-bubble::after {
+  content: "";
+  position: absolute;
+  left: -19px;
+  bottom: 14px;
+  width: 18px;
+  height: 18px;
+  background: url("../美术/2.0/mascot/气泡尾巴左_暖.png") no-repeat center / contain;
+  image-rendering: pixelated;
+}
+
+.mascot.flip .mascot-bubble::after {
+  left: auto;
+  right: -19px;
+  background-image: url("../美术/2.0/mascot/气泡尾巴右_暖.png");
+}
+
+.mascot-text {
+  margin: 0 0 8px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #3a2410;
+  text-shadow: none;
+}
+
+.mascot-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.mascot-btn {
+  pointer-events: auto;
+}
+
+/* 只有气泡里的按钮拦点击，头像和文字不挡操作。 */
+.mascot.is-modal .mascot-bubble {
+  pointer-events: auto;
+}
+
+.mascot-btn {
+  padding: 8px 14px;
+  font-size: 14px;
+  color: #ffe9c0;
+  cursor: pointer;
+  background: transparent;
+  border: 8px solid transparent;
+  border-radius: 6px;
+  /* 选项木牌：和气泡同一套暖色像素边框。 */
+  border-image-source: url("../美术/2.0/common/通用UI按键.png");
+  border-image-slice: 22 fill;
+  border-image-width: 8px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  text-shadow: 0 2px 0 rgba(40, 20, 6, 0.55);
+}
+
+.mascot-btn:hover {
+  filter: brightness(1.12);
+}
+
+.mascot-hint {
+  display: block;
+  font-size: 11px;
+  color: #ffce87;
+  text-shadow: none;
+}
+
+.mascot-btn.ghost {
+  color: #6a4d2a;
+  background: transparent;
+  border-image: none;
+  border-color: transparent;
+}
+
+.note-result {
+  margin: 6px 0;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #e0a93c;
+  border-radius: 4px;
+}
+
+.note-result b {
+  font-size: 12px;
+  color: #ffd98a;
+}
+
+.note-result p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chip-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.level-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.level-row {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.level-row.current {
+  border: 2px solid #e0a93c;
+}
+
+.op-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.op-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.op-row.done {
+  color: #8fe0a8;
+}
+
+.op-state {
+  color: #a9bfd2;
+}
+
+.timing {
+  position: relative;
+  height: 34px;
+  margin: 10px 0 4px;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.timing-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(143, 224, 168, 0.35);
+}
+
+.timing-marker {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 4px;
+  margin-left: -2px;
+  background: #ffd98a;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.chip-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #ffe9c0;
+  cursor: pointer;
+  background: #7a4f22;
+  border: 2px solid #b8884a;
+  border-radius: 6px;
+}
+
+.chip-btn:hover {
+  background: #8d5d2a;
+}
+
+.chip-btn.on {
+  color: #3a2410;
+  background: #e0a93c;
+  border-color: #ffd98a;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.row input[type="range"] {
+  flex: 1;
+  accent-color: #e0a93c;
+  pointer-events: auto;
+}
+
+.price-read {
+  color: #ffd98a;
+  font-weight: 700;
+}
+
+.mall-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.mall-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.mall-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mall-buy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cal-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.cal-day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 34px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+
+.cal-day.trend {
+  border-color: #8fe0a8;
+}
+
+.cal-day.today {
+  color: #241a08;
+  background: #e0a93c;
+  border-color: #ffd98a;
+}
+
+.cal-day.due {
+  border-color: #f09a8a;
+}
+
+.layer[data-role="tool"].is-active {
+  outline: 3px solid #e0a93c;
+  outline-offset: -3px;
+}
+
+.layer[data-role="tool"] > .label {
+  font-size: 14px;
+}
+
+/* 工具带只放工具，按钮固定在下方，避免被工具图标盖住。 */
+.layer[data-name="工具带"] > .panel {
+  padding: 0;
+}
+
+.belt-actions {
+  position: absolute;
+  left: 16px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.forge {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 2px solid rgba(255, 255, 255, 0.12);
+}
+
+.layer.is-dimmed {
+  filter: brightness(0.45);
+  pointer-events: none;
+}
+
+.portrait-tag {
+  margin: 6px 0 0;
+  font-size: 12px;
+  text-align: center;
+}
+
+.buyer-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 2px solid rgba(20, 40, 58, 0.25);
+}
+
+.buyer-head b {
+  font-size: 16px;
+}
+
+.buyer-head span {
+  font-size: 12px;
+  color: #3d5871;
+}
+
+.buyer-trait {
+  color: #8a5a12;
+}
+
+.speech.hint {
+  color: #3d5871;
+}
+
+.speech.bad {
+  color: #7a2e2e;
+  font-weight: bold;
+}
+
+/* ---------- 藏品收纳盒 ---------- */
+
+.keepsake-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.keepsake-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 96px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #33210f;
+  text-align: left;
+  background: url("../美术/2.0/shop/藏品槽一.png") no-repeat center / 100% 100%;
+  border: none;
+  border-radius: 0;
+}
+
+.keepsake-slot b {
+  font-size: 15px;
+}
+
+/* 空槽底图是深色木框，字要用浅色才看得清。 */
+.keepsake-slot.empty {
+  align-items: center;
+  justify-content: center;
+  color: #ded2ad;
+  font-size: 13px;
+  background: url("../美术/2.0/shop/收纳盒空槽.png") no-repeat center / 100% 100%;
+}
+
+.keepsake-slot.is-pickable {
+  cursor: pointer;
+}
+
+.keepsake-slot.is-pickable:hover {
+  filter: brightness(1.12);
+}
+
+.keepsake-trait {
+  font-size: 12px;
+  color: #7a3208;
+}
+
+.keepsake-tip {
+  display: none;
+  font-size: 11px;
+  color: #f1e6c8;
+}
+
+.keepsake-slot.is-pickable:hover .keepsake-tip {
+  display: block;
+}
+
+/* ---------- 图鉴：物品与箱子用图片、未解锁用剪影 ---------- */
+
+/* ---------- 店铺各窗口（PSD：店铺界面(2)） ---------- */
+
+/* ---------- 物品图片（美术/物品2.0） ---------- */
+
+.item-art-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* 货架格口里的物品图。 */
+.slot-art {
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 1px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* 检视台里的物品图 + 名称/编号。 */
+.item-art {
+  position: absolute;
+  inset: 6% 6% 12%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.item-art > .item-art-img {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.item-art-caption {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: #ffe1a8;
+  text-align: center;
+}
+
+.item-art-caption b {
+  display: block;
+  font-size: 14px;
+  color: #ffd98a;
+}
+
+/* 桌面待谈物品卡片里的缩略图。 */
+.desk-item-art {
+  display: block;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 2px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* 详情窗里的物品图。 */
+.detail-art {
+  float: right;
+  width: 128px;
+  height: 128px;
+  margin: 0 0 8px 12px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* 橱窗里展示的在售物品图。 */
+.window-art {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin: 6px auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* 检视台：左侧是操作台，右侧是一整页说明，不滚动。 */
+.layer[data-name="操作区"] > .panel {
+  padding: 0;
+  color: #33210f;
+}
+
+.inspect-op-area {
+  position: absolute;
+  inset: 0;
+  padding: 22px 22px 14px;
+  overflow: hidden;
+}
+
+.inspect-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: #241606;
+}
+
+.inspect-heading {
+  margin: 10px 0 2px;
+  font-size: 13px;
+  color: #241606;
+}
+
+.inspect-op-area .meta {
+  color: #5a4326;
+}
+
+.inspect-op-area .hint {
+  color: #7a3208;
+}
+
+.inspect-op-area .op-list {
+  margin: 2px 0 6px;
+}
+
+.inspect-op-area .op-row {
+  font-size: 13px;
+  border-bottom: 2px solid rgba(58, 36, 18, 0.18);
+}
+
+.inspect-op-area .op-row.done {
+  color: #2f6b34;
+}
+
+.inspect-op-area .op-state {
+  color: #6a4d2a;
+}
+
+.inspect-op-area .facts {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inspect-op-area .facts li {
+  color: #402c14;
+}
+
+.inspect-op-area .chip-btn {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* 左侧操作台：文字说明写在台面下方的浅色台边上。 */
+.layer[data-name="物品视图"] {
+  overflow: visible;
+}
+
+.layer[data-name="物品视图"] > .panel {
+  padding: 0;
+  overflow: visible;
+}
+
+.layer[data-name="操作区"] .inspect-title,
+.layer[data-name="操作区"] .inspect-heading {
+  color: #241606;
+}
+
+.inspect-hint {
+  position: absolute;
+  /* 提示写在物品视图底边内侧，不要压到检视台边框外。 */
+  left: 8px;
+  bottom: -17px;
+  margin: 0;
+  font-size: 12px;
+  color: #4a3418;
+}
+
+/* 电路修复的补充提示（污渍、零件顺序）挪到物品视图上方的空白处。 */
+.layer[data-name="物品视图"] > .panel > p.hint {
+  position: absolute;
+  left: 12px;
+  top: -46px;
+  width: 330px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* 通电测试 / 完成装机按钮放在主板左下角的空位。 */
+.layer[data-name="物品视图"] > .panel > button[data-role="power"] {
+  position: absolute;
+  left: 8px;
+  top: 288px;
+}
+
+/* 检视台工具图标：图标是美术，文字写在图标下方。 */
+.layer[data-role="tool"] > .label {
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+  font-size: 12px;
+  color: #ffe9c0;
+  text-shadow: 0 2px 0 rgba(30, 16, 6, 0.65);
+}
+
+/* 日历展开和收纳盒确认 PSD 没给底图，先用通用按键的九宫格边框。 */
+.layer[data-name="日历展开"],
+.layer[data-name="收纳盒确认"] {
+  border: 10px solid transparent;
+  border-image-source: url("../美术/2.0/common/通用UI按键.png");
+  border-image-slice: 22 fill;
+  border-image-width: 10px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+.layer[data-name="日历展开"] > .panel,
+.layer[data-name="收纳盒确认"] > .panel {
+  padding: 22px 26px;
+}
+
+/* 详情窗 / 出售窗：文字压深，底部按钮用 PSD 按钮图。 */
+.layer[data-name="物品详情窗口"] > .panel,
+.layer[data-name="物品信息窗口"] > .panel,
+.layer[data-name="商城页面"] > .panel,
+.layer[data-name="万物通页面"] > .panel {
+  color: #33210f;
+  /* 内页文字整体下移，压在标题框内侧，不贴到窗口的木边上。 */
+  padding: 126px 88px 76px;
+}
+
+/* 出售窗：一页放下全部内容，不滚动。 */
+.layer[data-name="出售页面"] > .panel {
+  position: relative;
+  padding: 44px 36px 104px;
+  font-size: 13px;
+  color: #33210f;
+  overflow: hidden;
+}
+
+.layer[data-name="出售页面"] .panel h4 {
+  margin: 6px 0 2px;
+  font-size: 13px;
+}
+
+.layer[data-name="出售页面"] .panel h4:first-child {
+  margin-top: 0;
+}
+
+.layer[data-name="出售页面"] .panel p {
+  margin: 1px 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.layer[data-name="出售页面"] .panel .chips {
+  gap: 3px;
+  margin: 2px 0 3px;
+}
+
+.layer[data-name="出售页面"] .panel .chip-btn {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.layer[data-name="出售页面"] .panel .row {
+  margin: 4px 0;
+}
+
+.layer[data-name="出售页面"] .panel .quote-warning {
+  margin: 4px 0;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* 按钮钉在窗口白区底部，任何情况下都不会跑出边框。 */
+.layer[data-name="出售页面"] .panel .actions {
+  position: absolute;
+  left: 36px;
+  right: 36px;
+  bottom: 56px;
+  margin: 0;
+}
+
+.layer[data-name="物品详情窗口"] .panel h4,
+.layer[data-name="物品信息窗口"] .panel h4,
+.layer[data-name="出售页面"] .panel h4,
+.layer[data-name="商城页面"] .panel h4,
+.layer[data-name="万物通页面"] .panel h4 {
+  color: #241606;
+}
+
+.layer[data-name="物品详情窗口"] .panel .meta,
+.layer[data-name="物品信息窗口"] .panel .meta,
+.layer[data-name="出售页面"] .panel .meta,
+.layer[data-name="商城页面"] .panel .meta,
+.layer[data-name="万物通页面"] .panel .meta,
+.layer[data-name="物品详情窗口"] .panel ul.facts li,
+.layer[data-name="物品信息窗口"] .panel ul.facts li {
+  color: #402c14;
+}
+
+/* 浅色内页里的提示文字用深暖色，浅金色在米白底上看不清。 */
+.layer[data-name="物品详情窗口"] .panel .hint,
+.layer[data-name="物品信息窗口"] .panel .hint,
+.layer[data-name="出售页面"] .panel .hint,
+.layer[data-name="商城页面"] .panel .hint,
+.layer[data-name="万物通页面"] .panel .hint {
+  color: #8a5a12;
+}
+
+.layer[data-name="出售页面"] .panel .quote-warning {
+  color: #2a1a06;
+}
+
+/* 商城列表：每行用 PSD 的信息条做底，不再画物品图底框。 */
+.mall-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mall-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 80px;
+  padding: 12px 22px;
+  margin: 0 0 6px;
+  background: url("../美术/2.0/shop/商城_物品信息栏.png") no-repeat center / 100% 100%;
+  border: none;
+}
+
+/* 浅色内页上的价格换成深金色，原来的浅金在米白底上看不清。 */
+.layer[data-name="出售页面"] .panel .price-read,
+.layer[data-name="商城页面"] .panel .price-read {
+  color: #8a4a10;
+}
+
+/* 商城：滚动交给列表本身，滚上去的内容不会再压住顶栏。 */
+.layer[data-name="商城页面"] > .panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.layer[data-name="商城页面"] > .panel .mall-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.layer[data-name="商城页面"] > .panel .actions {
+  flex: 0 0 auto;
+  margin-top: 10px;
+}
+
+/* 两个窗口顶部那条索引栏都是纯文字层：整条可点，点了在购买窗口和搜索窗口之间切。 */
+.layer[data-role="mallSearch"],
+.layer[data-role="univIndex"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* 信贷海报下沿的两个按钮。 */
+.layer[data-role="loanActions"] > .panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 0;
+}
+
+.layer[data-role="loanActions"] .loan-btn {
+  min-width: 148px;
+  padding: 10px 14px;
+  font-size: 15px;
+  /* 和教学选项同一套像素木牌边框。 */
+  border: 8px solid transparent;
+  border-radius: 6px;
+  border-image-source: url("../美术/2.0/common/通用UI按键.png");
+  border-image-slice: 22 fill;
+  border-image-width: 8px;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  text-shadow: 0 2px 0 rgba(40, 20, 6, 0.55);
+}
+
+.layer[data-role="mallSearch"]:hover {
+  outline: 2px solid rgba(224, 169, 60, 0.85);
+  outline-offset: -2px;
+}
+
+/* 记事本是一本摊开的书：内容分写在左右两张书页上，字号按书页缩小。 */
+.layer[data-name="记事本_左页"] > .panel,
+.layer[data-name="记事本_右页"] > .panel {
+  padding: 0;
+  font-size: 12px;
+  color: #33210f;
+}
+
+.layer[data-name="记事本_左页"] > .panel h4,
+.layer[data-name="记事本_右页"] > .panel h4 {
+  color: #4a2c10;
+}
+
+/* 左页：相片按 PSD 位置摆在页面上，买家信息写在相片下方。 */
+.nb-left {
+  position: relative;
+  height: 100%;
+  padding: 206px 18px 12px;
+  box-sizing: border-box;
+}
+
+.nb-left .nb-photo {
+  position: absolute;
+  left: 38px;
+  top: 17px;
+  width: 147px;
+  height: 185px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  image-rendering: pixelated;
+}
+
+.nb-left h4 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.nb-left p {
+  margin: 0 0 5px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #4a3719;
+}
+
+/* 右页：关键词、组合查询按钮和查询结果。 */
+.nb-right,
+.nb-page {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 14px 12px 12px;
+}
+
+/* 右页右下角压着翻页三角标，正文给它留出位置。 */
+.nb-right {
+  padding-bottom: 56px;
+}
+
+.nb-right h4,
+.nb-page h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.nb-right .nb-actions,
+.nb-page .nb-actions {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+
+.nb-right .nb-actions .btn,
+.nb-page .nb-actions .btn {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+/* 书页里的正文可以滚，页头和按钮钉在页面上。 */
+.nb-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.layer[data-name="记事本_左页"] .panel .meta,
+.layer[data-name="记事本_右页"] .panel .meta,
+.layer[data-name="记事本_左页"] .panel p,
+.layer[data-name="记事本_右页"] .panel p {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #4a3719;
+}
+
+.layer[data-name="记事本_左页"] .panel .chips,
+.layer[data-name="记事本_右页"] .panel .chips {
+  gap: 4px;
+  margin: 2px 0;
+}
+
+.layer[data-name="记事本_左页"] .panel .chip-btn,
+.layer[data-name="记事本_右页"] .panel .chip-btn {
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.layer[data-name="记事本_左页"] .panel .note-result,
+.layer[data-name="记事本_右页"] .panel .note-result {
+  margin: 4px 0;
+  padding: 5px 7px;
+  background: rgba(120, 86, 40, 0.1);
+}
+
+.layer[data-name="记事本_左页"] .panel .note-result b,
+.layer[data-name="记事本_右页"] .panel .note-result b {
+  color: #8a5a12;
+}
+
+/* 图鉴排进书页后要更紧凑一些。 */
+.layer[data-name="记事本_左页"] .compendium-items,
+.layer[data-name="记事本_右页"] .compendium-boxes {
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.layer[data-name="记事本_左页"] .compendium-item {
+  padding: 5px;
+}
+
+.layer[data-name="记事本_左页"] .compendium-item b,
+.layer[data-name="记事本_左页"] .compendium-count {
+  font-size: 10px;
+}
+
+.layer[data-name="记事本_左页"] .compendium-item {
+  background: rgba(120, 86, 40, 0.12);
+  border-color: rgba(120, 86, 40, 0.35);
+}
+
+.layer[data-name="记事本_左页"] .compendium-item b {
+  color: #4a2c10;
+}
+
+.layer[data-name="记事本_右页"] .compendium-art {
+  background: rgba(120, 86, 40, 0.14);
+}
+
+.layer[data-name="记事本_右页"] .level-row b {
+  color: #4a2c10;
+}
+
+/* 书底只是底图，不拦鼠标，压在它下面的书签才点得到。 */
+.layer[data-name="记事本页面"] {
+  pointer-events: none;
+}
+
+/* 记事本关闭键单独一层，位置和原来的窗口关闭键一致。 */
+.layer[data-name="记事本_关闭"] > .sheet-close {
+  right: 0;
+  top: 0;
+}
+
+/* 纯文字层默认不拦鼠标，里面的按键要单独放行。 */
+.layer.is-artless > .sheet-close {
+  pointer-events: auto;
+}
+
+/* 收纳盒窗口。 */
+.layer[data-name="收纳盒窗口"] > .panel {
+  padding: 96px 78px 130px;
+  color: #33210f;
+}
+
+.layer[data-name="收纳盒窗口"] .panel h4 {
+  color: #241606;
+}
+
+.compendium-boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  margin: 8px 0 14px;
+}
+
+.compendium-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 10px;
+  margin: 8px 0 14px;
+}
+
+.compendium-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  text-align: center;
+  background: #1c2c3a;
+  border: 2px solid #47657f;
+  border-radius: 6px;
+}
+
+.compendium-item b {
+  font-size: 13px;
+  color: #f1e6c8;
+}
+
+.compendium-count {
+  font-size: 11px;
+  color: #9fb6c8;
+}
+
+.compendium-art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  image-rendering: pixelated;
+}
+
+/* 没见过的条目只留剪影，不透露细节颜色。 */
+.compendium-art.is-silhouette {
+  filter: brightness(0) opacity(0.45);
+}

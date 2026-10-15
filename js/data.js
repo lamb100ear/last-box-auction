@@ -17,7 +17,8 @@ export const CONFIG = {
   onlineSaleReturn: 0.96,
   onsiteSaleReturn: 0.9,
   gameMinutesPerSecond: 2.5,
-  idleReminderSeconds: 10
+  idleReminderSeconds: 10,
+  assetVersion: "20261007-7"
 };
 
 export const DESKTOP_APPS = [
@@ -45,7 +46,7 @@ export const DESKTOP_APPS = [
     icon: "auction",
     area: "desktop",
     windowTitle: "线上失物拍卖",
-    defaultSize: { width: 820, height: 600 },
+    defaultSize: { width: 1000, height: 720 },
     description: "参加每日行李箱拍卖。"
   },
   {
@@ -54,7 +55,7 @@ export const DESKTOP_APPS = [
     icon: "shop",
     area: "desktop",
     windowTitle: "我的店铺",
-    defaultSize: { width: 840, height: 620 },
+    defaultSize: { width: 980, height: 700 },
     description: "管理库存、上架商品和买家私信。"
   },
   {
@@ -77,11 +78,502 @@ export const DESKTOP_APPS = [
   },
 ];
 
+export const ITEM_COMPOSITION_POOLS = {
+  conditions: [
+    {
+      id: "excellent",
+      label: "优良",
+      description: "保存状态很好，几乎没有使用痕迹",
+      valueMultiplier: 1.2,
+      weight: 10
+    },
+    {
+      id: "normal",
+      label: "普通",
+      description: "有正常使用或存放痕迹",
+      valueMultiplier: 1,
+      weight: 30
+    },
+    {
+      id: "lightly_used",
+      label: "轻微使用",
+      description: "还能正常使用，表面有少量磨损",
+      valueMultiplier: 0.92,
+      weight: 24
+    },
+    {
+      id: "long_stored",
+      label: "长期存放",
+      description: "很久没有被使用，可能带有灰尘和旧包装痕迹",
+      valueMultiplier: 0.96,
+      weight: 16
+    },
+    {
+      id: "damp",
+      label: "受潮",
+      description: "出现水渍、霉点或纸张变形",
+      valueMultiplier: 0.76,
+      weight: 8
+    },
+    {
+      id: "rusted",
+      label: "锈蚀",
+      description: "金属部分氧化，结构仍可能完整",
+      valueMultiplier: 0.7,
+      weight: 7
+    },
+    {
+      id: "broken",
+      label: "破损",
+      description: "存在明显破损或功能缺失",
+      valueMultiplier: 0.58,
+      weight: 5
+    }
+  ],
+  origins: [
+    {
+      id: "airport_long_storage",
+      label: "机场长期寄存",
+      keyword: "长期寄存",
+      valueMultiplier: 1,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 18
+    },
+    {
+      id: "airport_lost_found",
+      label: "机场失物招领",
+      keyword: "失物批次",
+      valueMultiplier: 1,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 16
+    },
+    {
+      id: "station_warehouse",
+      label: "车站仓库清仓",
+      keyword: "旧车站批次",
+      valueMultiplier: 1.06,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 11
+    },
+    {
+      id: "hotel_left",
+      label: "酒店遗留物",
+      keyword: "酒店遗留",
+      valueMultiplier: 0.96,
+      categories: ["junk", "common", "luxury"],
+      weight: 10
+    },
+    {
+      id: "private_consignment",
+      label: "私人寄售",
+      keyword: "私人来源",
+      valueMultiplier: 1.14,
+      categories: ["common", "luxury", "special"],
+      weight: 12
+    },
+    {
+      id: "old_house_clearance",
+      label: "旧宅清仓",
+      keyword: "旧宅来源",
+      valueMultiplier: 1.08,
+      categories: ["junk", "common", "luxury"],
+      weight: 12
+    },
+    {
+      id: "bankruptcy_liquidation",
+      label: "破产清算",
+      keyword: "清算批次",
+      valueMultiplier: 0.94,
+      categories: ["junk", "common", "luxury"],
+      weight: 10
+    },
+    {
+      id: "auction_return",
+      label: "拍卖退货",
+      keyword: "流拍退回",
+      valueMultiplier: 0.9,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 8
+    },
+    {
+      id: "anonymous_consignment",
+      label: "匿名托运",
+      keyword: "匿名托运",
+      valueMultiplier: 1.18,
+      categories: ["common", "luxury", "special"],
+      weight: 7
+    }
+  ],
+  labels: [
+    {
+      id: "handwritten_name",
+      label: "手写姓名",
+      keyword: "手写姓名",
+      valueMultiplier: 1.08,
+      categories: ["junk", "common", "luxury"],
+      weight: 12
+    },
+    {
+      id: "year_mark",
+      label: "年份标记",
+      keyword: "年份标记",
+      valueMultiplier: 1.08,
+      categories: ["common", "luxury"],
+      weight: 12
+    },
+    {
+      id: "baggage_tag",
+      label: "机场托运贴纸",
+      keyword: "托运贴纸",
+      valueMultiplier: 0.98,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 14
+    },
+    {
+      id: "locker_number",
+      label: "寄存柜号码",
+      keyword: "寄存编号",
+      valueMultiplier: 1.18,
+      categories: ["common", "luxury", "special"],
+      weight: 7
+    },
+    {
+      id: "repair_tag",
+      label: "维修标签",
+      keyword: "维修标签",
+      valueMultiplier: 1.1,
+      categories: ["common", "luxury"],
+      weight: 10
+    },
+    {
+      id: "maintenance_tag",
+      label: "保养标签",
+      keyword: "保养记录",
+      valueMultiplier: 1.08,
+      categories: ["luxury"],
+      weight: 7
+    },
+    {
+      id: "price_tag",
+      label: "旧价格标签",
+      keyword: "旧价签",
+      valueMultiplier: 0.98,
+      categories: ["junk", "common"],
+      weight: 12
+    },
+    {
+      id: "old_shop_tag",
+      label: "旧店铺标签",
+      keyword: "店铺来源",
+      valueMultiplier: 1.05,
+      categories: ["junk", "common", "luxury"],
+      weight: 10
+    },
+    {
+      id: "customs_tag",
+      label: "海关或免税标签",
+      keyword: "海关标签",
+      valueMultiplier: 1.12,
+      categories: ["common", "luxury", "special"],
+      weight: 6
+    },
+    {
+      id: "handwritten_address",
+      label: "手写地址",
+      keyword: "手写地址",
+      valueMultiplier: 1.06,
+      categories: ["junk", "common", "luxury"],
+      weight: 10
+    },
+    {
+      id: "missing_label",
+      label: "标签缺失",
+      keyword: "无标签",
+      valueMultiplier: 0.84,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 9
+    },
+    {
+      id: "damaged_label",
+      label: "标签损坏",
+      keyword: "破损标签",
+      valueMultiplier: 0.9,
+      categories: ["junk", "common", "luxury", "special"],
+      weight: 9
+    }
+  ],
+  appearances: [
+    {
+      id: "complete",
+      label: "完整",
+      keyword: "外观完整",
+      description: "没有明显缺件或破损",
+      valueMultiplier: 1.07,
+      allowedConditions: ["excellent", "normal", "lightly_used", "long_stored"],
+      weight: 18
+    },
+    {
+      id: "minor_wear",
+      label: "边缘磨损",
+      keyword: "边缘磨损",
+      description: "边角有长期接触或移动留下的磨损",
+      valueMultiplier: 0.96,
+      allowedConditions: ["excellent", "normal", "lightly_used", "long_stored"],
+      weight: 22
+    },
+    {
+      id: "scratched",
+      label: "表面划痕",
+      keyword: "表面划痕",
+      description: "表面有几道细划痕，结构没有明显损伤",
+      valueMultiplier: 0.92,
+      allowedConditions: ["normal", "lightly_used", "long_stored", "rusted"],
+      weight: 18
+    },
+    {
+      id: "chipped",
+      label: "掉漆缺角",
+      keyword: "掉漆缺角",
+      description: "局部掉漆或缺角，仍保留主要轮廓",
+      valueMultiplier: 0.84,
+      allowedConditions: ["lightly_used", "long_stored", "rusted", "broken"],
+      weight: 12
+    },
+    {
+      id: "missing_part",
+      label: "缺少零件",
+      keyword: "缺少零件",
+      description: "缺少一个可以辨认出用途的小零件",
+      valueMultiplier: 0.72,
+      allowedConditions: ["long_stored", "rusted", "broken"],
+      weight: 9
+    },
+    {
+      id: "cracked",
+      label: "明显裂痕",
+      keyword: "明显裂痕",
+      description: "有一道延伸到结构处的裂痕",
+      valueMultiplier: 0.7,
+      allowedConditions: ["rusted", "broken"],
+      weight: 7
+    },
+    {
+      id: "yellowed",
+      label: "纸张泛黄",
+      keyword: "纸张泛黄",
+      description: "纸张或包装明显泛黄，边缘变脆",
+      valueMultiplier: 0.82,
+      allowedConditions: ["long_stored", "damp", "broken"],
+      weight: 10
+    },
+    {
+      id: "curled_label",
+      label: "标签卷边",
+      keyword: "标签卷边",
+      description: "标签一角翘起，部分文字仍能辨认",
+      valueMultiplier: 0.9,
+      allowedConditions: ["long_stored", "damp", "broken"],
+      weight: 9
+    },
+    {
+      id: "seal_broken",
+      label: "封条破损",
+      keyword: "封条破损",
+      description: "原封条曾经被打开或重新贴回",
+      valueMultiplier: 0.86,
+      allowedConditions: ["lightly_used", "long_stored", "damp", "broken"],
+      weight: 8
+    },
+    {
+      id: "lining_torn",
+      label: "内衬开裂",
+      keyword: "内衬开裂",
+      description: "内衬接缝裂开，可能藏有夹层",
+      valueMultiplier: 0.88,
+      allowedConditions: ["long_stored", "damp", "broken"],
+      weight: 8
+    },
+    {
+      id: "rusted_surface",
+      label: "氧化锈斑",
+      keyword: "氧化锈斑",
+      description: "金属表面出现不规则氧化痕迹",
+      valueMultiplier: 0.74,
+      allowedConditions: ["rusted", "broken"],
+      weight: 8
+    }
+  ]
+};
+
+export const AUCTION_BOX_GENERATION = {
+  minLots: 2,
+  maxLots: 4,
+  tiers: [
+    {
+      id: "low",
+      weight: 46,
+      minPrice: 120,
+      maxPrice: 260,
+      itemCount: [1, 3],
+      valueRange: [40, 560],
+      categoryWeights: {
+        junk: 0.42,
+        common: 0.5,
+        luxury: 0.07,
+        special: 0.01
+      }
+    },
+    {
+      id: "medium",
+      weight: 36,
+      minPrice: 280,
+      maxPrice: 620,
+      itemCount: [2, 4],
+      valueRange: [90, 1450],
+      categoryWeights: {
+        junk: 0.16,
+        common: 0.58,
+        luxury: 0.22,
+        special: 0.04
+      }
+    },
+    {
+      id: "high",
+      weight: 18,
+      minPrice: 680,
+      maxPrice: 1400,
+      itemCount: [3, 5],
+      valueRange: [320, 2800],
+      categoryWeights: {
+        junk: 0.04,
+        common: 0.28,
+        luxury: 0.56,
+        special: 0.12
+      }
+    }
+  ],
+  routes: [
+    "苏黎世",
+    "巴黎",
+    "东京",
+    "开罗",
+    "首尔",
+    "新加坡",
+    "阿姆斯特丹",
+    "赫尔辛基",
+    "里约热内卢",
+    "偏远地区",
+    "国内中转",
+    "跨境转机"
+  ],
+  sizes: [
+    { label: "登机箱", weight: 12 },
+    { label: "中号硬壳箱", weight: 18 },
+    { label: "大号软壳箱", weight: 16 },
+    { label: "旧式皮箱", weight: 7 },
+    { label: "航空运输箱", weight: 5 }
+  ],
+  seals: [
+    { id: "intact", label: "封条完整", description: "封条完整，没有被重新贴过的痕迹", weight: 24 },
+    { id: "worn", label: "封条磨损", description: "封条边缘磨损，文字还能辨认", weight: 20 },
+    { id: "replaced", label: "二次封条", description: "封条较新，和箱体年代不一致", weight: 14 },
+    { id: "broken", label: "封条破损", description: "封条已经断开，箱子可能被打开过", weight: 14 },
+    { id: "missing", label: "封条缺失", description: "没有封条，只剩一圈旧胶痕", weight: 10 }
+  ],
+  appearances: [
+    { id: "complete", label: "完整", description: "箱体结构完整，锁扣还能正常使用", weight: 17 },
+    { id: "worn", label: "磨损", description: "边角掉色，轮子和把手有长期使用痕迹", weight: 22 },
+    { id: "torn", label: "撕裂", description: "箱体侧面有裂口，内部仍保持基本完整", weight: 13 },
+    { id: "lock_damaged", label: "锁具损坏", description: "锁扣被撬过，可能有人直接打开过", weight: 13 },
+    { id: "odor", label: "明显异味", description: "有陈旧气味，内部可能受潮", weight: 11 },
+    { id: "unclaimed_long", label: "长期无人认领", description: "托运标签已经褪色，寄存时间很长", weight: 14 },
+    { id: "relabeled", label: "标签重贴", description: "目的地标签下面还有一层旧标签", weight: 10 }
+  ],
+  competitors: [
+    { id: "rival_old_zhou", name: "铁皮箱老周", aggression: 0.5 },
+    { id: "rival_mimi", name: "不眨眼咪咪", aggression: 0.68 },
+    { id: "rival_lina", name: "一锤定音莉娜", aggression: 0.74 },
+    { id: "rival_hu", name: "旧货胡叔", aggression: 0.44 },
+    { id: "rival_seven", name: "七号买家", aggression: 0.71 }
+  ]
+};
+
+export const MINIGAME_ART_ASSETS = {
+  tools: {
+    cloth: {
+      label: "软布",
+      primary: "./美术/小游戏/tools/cloth.png",
+      fallback: "./美术/小游戏/tools/cloth.svg"
+    },
+    brush: {
+      label: "清洁刷",
+      primary: "./美术/小游戏/tools/brush.png",
+      fallback: "./美术/小游戏/tools/brush.svg"
+    },
+    polish: {
+      label: "抛光布",
+      primary: "./美术/小游戏/tools/polish.png",
+      fallback: "./美术/小游戏/tools/polish.svg"
+    },
+    screwdriver: {
+      label: "螺丝刀",
+      primary: "./美术/小游戏/tools/screwdriver.png",
+      fallback: "./美术/小游戏/tools/screwdriver.svg"
+    },
+    tweezers: {
+      label: "镊子",
+      primary: "./美术/小游戏/tools/tweezers.png",
+      fallback: "./美术/小游戏/tools/tweezers.svg"
+    },
+    oil: {
+      label: "油壶",
+      primary: "./美术/小游戏/tools/oil.png",
+      fallback: "./美术/小游戏/tools/oil.svg"
+    },
+    label: {
+      label: "标签工具",
+      primary: "./美术/小游戏/tools/label.png",
+      fallback: "./美术/小游戏/tools/label.svg"
+    },
+    magnifier: {
+      label: "放大镜",
+      primary: "./美术/小游戏/tools/magnifier.png",
+      fallback: "./美术/小游戏/tools/magnifier.svg"
+    }
+  },
+  benches: {
+    fabric: {
+      primary: "./美术/小游戏/benches/fabric.png",
+      fallback: "./美术/小游戏/benches/fabric.svg"
+    },
+    metal: {
+      primary: "./美术/小游戏/benches/metal.png",
+      fallback: "./美术/小游戏/benches/metal.svg"
+    },
+    electronics: {
+      primary: "./美术/小游戏/benches/electronics.png",
+      fallback: "./美术/小游戏/benches/electronics.svg"
+    },
+    document: {
+      primary: "./美术/小游戏/benches/document.png",
+      fallback: "./美术/小游戏/benches/document.svg"
+    },
+    luxury: {
+      primary: "./美术/小游戏/benches/luxury.png",
+      fallback: "./美术/小游戏/benches/luxury.svg"
+    },
+    generic: {
+      primary: "./美术/小游戏/benches/generic.png",
+      fallback: "./美术/小游戏/benches/generic.svg"
+    }
+  }
+};
+
 export const STAGE_TWO_DATA = {
   news: {
     id: "first_auction",
     title: "线上失物拍卖即将开始",
-    effect: "两只无人认领行李箱已经上架",
+    effect: "一批无人认领行李箱已经上架",
     duration: "今天",
     detail:
       "今晚将进行一场无人认领行李箱拍卖。箱子来源和内容均未完整登记，成交后可以选择原封转卖、现场开箱或带回家。平台提醒：高价值物品和来源不明物品可能带来额外风险。"
